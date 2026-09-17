@@ -4,6 +4,7 @@
 local.properties
 *.jks
 *.keystore
+*.apk
 
 # Local visual reference from the original app; not application assets.
 references/*.jpg

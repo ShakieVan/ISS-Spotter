@@ -26,9 +26,21 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("${project.rootDir}/iss-release.jks")
+            storePassword = "iss-spotter-release"
+            keyAlias = "iss-spotter"
+            keyPassword = "iss-spotter-release"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
