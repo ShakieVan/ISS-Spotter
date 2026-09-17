@@ -65,23 +65,32 @@ fragment {
 
         // Natural cloud density curve with toggleable showClouds parameter
         float rawCloud = (cloudSample.a < 0.99 && cloudSample.a > 0.01) ? cloudSample.a : cloudSample.r;
+
+        // Edge seam suppression for satellite coverage gaps on the Pacific dateline (u=0 / u=1)
+        float datelineDist = min(uv.x, 1.0 - uv.x);
+        float gapSuppression = smoothstep(0.002, 0.040, datelineDist);
+        float filteredCloud = (rawCloud > 0.86) ? mix(rawCloud * 0.35, rawCloud, gapSuppression) : rawCloud;
+
+        // Polar fade to avoid infrared ground-freeze whiteout over Antarctica and Arctic ice sheets
         float poleDist = abs(uv.y - 0.5) * 2.0;
-        float poleMask = 1.0 - smoothstep(0.80, 0.96, poleDist);
-        float cloudAlpha = smoothstep(0.22, 0.82, rawCloud) * poleMask * materialParams.showClouds;
+        float poleMask = 1.0 - smoothstep(0.68, 0.94, poleDist);
+
+        // Clean cloud alpha curve: eliminates low-level ocean grey floor (<0.34) and caps at 0.82 to prevent snowballs
+        float cloudAlpha = smoothstep(0.34, 0.86, filteredCloud) * 0.82 * poleMask * materialParams.showClouds;
 
         // Cloud shadow on Earth surface (only in daylight, only if clouds visible)
         float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
         float4 shadowSample = texture(materialParams_cloudMap, shadowUv);
         float rawShadow = (shadowSample.a < 0.99 && shadowSample.a > 0.01) ? shadowSample.a : shadowSample.r;
-        float shadowAlpha = smoothstep(0.22, 0.82, rawShadow) * materialParams.showClouds;
-        float shadowFactor = 1.0 - shadowAlpha * 0.70 * max(sunDot, 0.0);
+        float shadowAlpha = smoothstep(0.34, 0.86, rawShadow) * 0.70 * poleMask * materialParams.showClouds;
+        float shadowFactor = 1.0 - shadowAlpha * 0.60 * max(sunDot, 0.0);
 
-        // Specular sun glint on ocean (with golden sunset tinting near terminator)
+        // Specular sun glint on ocean (tight physically-accurate specular highlight)
         float oceanMask = clamp((daySample.b - max(daySample.r, daySample.g) * 0.85) * 4.0, 0.0, 1.0);
         float3 reflected = reflect(-eyeDir, normal);
         float specAngle = max(dot(reflected, sunDir), 0.0);
-        float sunGlint = pow(specAngle, 45.0) * oceanMask * max(sunDot, 0.0) * (1.0 - cloudAlpha);
-        float3 glintColor = directSunColor * sunGlint * 2.8;
+        float sunGlint = pow(specAngle, 120.0) * oceanMask * max(sunDot, 0.0) * (1.0 - cloudAlpha);
+        float3 glintColor = directSunColor * sunGlint * 1.2;
 
         // Night city lights occlusion by clouds:
         // When clouds are dense, city lights are dimmed/blocked from reaching space!

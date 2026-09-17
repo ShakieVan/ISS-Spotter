@@ -6,7 +6,8 @@ material {
     depthWrite : false,
     requires : [ uv0 ],
     parameters : [
-        { type : float, name : intensity }
+        { type : float, name : intensity },
+        { type : float, name : time }
     ]
 }
 
@@ -21,21 +22,28 @@ fragment {
             return;
         }
 
-        // Smooth windowing that is guaranteed to reach 0.0 well before the mesh boundary
-        float edgeFade = smoothstep(1.0, 0.20, r);
+        // Ultra-soft, seamless cubic falloff guaranteeing zero visible boundary
+        float w = clamp(1.0 - r, 0.0, 1.0);
+        float edgeFade = w * w * (3.0 - 2.0 * w);
         edgeFade = edgeFade * edgeFade;
 
         float intens = max(materialParams.intensity, 0.1);
 
         // 1. Solar Photosphere Core (blinding intense white light)
-        float core = exp(-pow(r * 20.0, 2.0));
-        float3 coreColor = float3(95.0, 95.0, 92.0) * core;
+        float core = exp(-pow(r * 22.0, 2.0));
+        float3 coreColor = float3(98.0, 98.0, 92.0) * core;
 
-        // 2. Solar Corona & Bloom (compact golden radiating glow)
-        float corona = exp(-pow(r * 5.5, 1.4)) * 4.5;
-        float3 coronaColor = float3(5.5, 4.0, 2.0) * corona;
+        // 2. Solar Corona & Bloom: ultra-soft diffuse golden glow with animated shimmer
+        float t = materialParams.time;
+        float pulse = 1.0 + 0.05 * sin(t * 2.0);
+        float rPulse = r * pulse;
 
-        // Total additive HDR color with guaranteed smooth edge fade to 0
+        // Long-tail inverse power falloff: washed out and smooth with zero perceptible edge
+        float coronaInner = 1.0 / (1.0 + pow(rPulse * 16.0, 2.0));
+        float coronaOuter = 1.0 / (1.0 + pow(rPulse * 5.0, 1.7));
+        float3 coronaColor = float3(4.2, 3.2, 1.2) * coronaInner + float3(0.85, 0.45, 0.10) * coronaOuter;
+
+        // Total additive HDR color with seamless fade to black
         float3 totalRgb = (coreColor + coronaColor) * intens * edgeFade;
 
         material.baseColor = float4(totalRgb, 1.0);

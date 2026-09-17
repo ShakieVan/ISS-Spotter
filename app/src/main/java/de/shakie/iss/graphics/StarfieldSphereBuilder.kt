@@ -145,7 +145,7 @@ object StarfieldSphereBuilder {
     fun buildConstellationLines(
         engine: Engine,
         radius: Float = 67.8f,
-        ribbonHalfWidth: Float = 0.09f
+        ribbonHalfWidth: Float = 0.014f
     ): EarthMesh {
         val starCoords = mutableMapOf<String, FloatArray>()
         for (star in CelestialCatalog.stars) {
@@ -229,9 +229,9 @@ object StarfieldSphereBuilder {
             posBuffer.put(v2x).put(v2y).put(v2z)
             posBuffer.put(v3x).put(v3y).put(v3z)
 
-            // Luminous celestial cyan/blue
+            // Luminous celestial cyan/blue with delicate transparency (feine Haarlinie)
             for (k in 0 until 4) {
-                colorBuffer.put(0.45f).put(0.85f).put(1.0f).put(0.88f)
+                colorBuffer.put(0.40f).put(0.75f).put(1.0f).put(0.24f)
             }
 
             val base = idx * 4

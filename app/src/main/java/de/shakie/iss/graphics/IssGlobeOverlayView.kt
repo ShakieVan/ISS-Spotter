@@ -6,6 +6,7 @@ import android.opengl.Matrix
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import de.shakie.iss.astronomy.CelestialCatalog
 import kotlin.math.*
 
 class IssGlobeOverlayView @JvmOverloads constructor(
@@ -82,6 +83,70 @@ class IssGlobeOverlayView @JvmOverloads constructor(
     private val flareStreakPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val flareGhostPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    data class ConstellationLabel(
+        val name: String,
+        val x: Float,
+        val y: Float,
+        val z: Float
+    )
+
+    private val constellationLabels: List<ConstellationLabel> by lazy {
+        val radius = 67.5f
+        val starCoords = mutableMapOf<String, FloatArray>()
+        for (star in CelestialCatalog.stars) {
+            val raRad = Math.toRadians(star.raHours * 15.0).toFloat()
+            val decRad = Math.toRadians(star.decDeg).toFloat()
+            val nx = cos(decRad) * cos(raRad)
+            val ny = sin(decRad)
+            val nz = cos(decRad) * sin(raRad)
+            starCoords[star.name] = floatArrayOf(radius * nx, radius * ny, radius * nz)
+        }
+
+        CelestialCatalog.constellations.map { c ->
+            val uniqueStars = mutableSetOf<String>()
+            for ((s1, s2) in c.lines) {
+                uniqueStars.add(s1)
+                uniqueStars.add(s2)
+            }
+            if (uniqueStars.isEmpty()) uniqueStars.add(c.labelStar)
+            var avgX = 0f
+            var avgY = 0f
+            var avgZ = 0f
+            for (sName in uniqueStars) {
+                val pt = starCoords[sName] ?: continue
+                avgX += pt[0]
+                avgY += pt[1]
+                avgZ += pt[2]
+            }
+            val count = uniqueStars.size.coerceAtLeast(1)
+            avgX /= count
+            avgY /= count
+            avgZ /= count
+            val centerLen = sqrt(avgX * avgX + avgY * avgY + avgZ * avgZ).coerceAtLeast(0.001f)
+            ConstellationLabel(
+                name = c.name,
+                x = (avgX / centerLen) * radius,
+                y = (avgY / centerLen) * radius,
+                z = (avgZ / centerLen) * radius
+            )
+        }
+    }
+
+    private val constellationTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#BAE6FD")
+        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+        letterSpacing = 0.08f
+    }
+
+    private val constellationOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(220, 5, 12, 28)
+        style = Paint.Style.STROKE
+        strokeJoin = Paint.Join.ROUND
+        textAlign = Paint.Align.CENTER
+        letterSpacing = 0.08f
+    }
+
     fun setLabelsVisible(visible: Boolean) {
         bordersVisible = visible
         postInvalidateOnAnimation()
@@ -132,6 +197,9 @@ class IssGlobeOverlayView @JvmOverloads constructor(
 
         // 2. Optical Screen-Space Lens Flare (when Sun is in view and not eclipsed by Earth)
         drawOpticalLensFlare(canvas, eyeX, eyeY, eyeZ, w, h)
+
+        // 3. Constellation Names (always in view when looking at the sky, crisp and upright)
+        drawConstellationLabels(canvas, eyeX, eyeY, eyeZ, w, h)
 
         if (!bordersVisible) return
 
@@ -233,6 +301,58 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         }
     }
 
+    private fun drawConstellationLabels(
+        canvas: Canvas,
+        eyeX: Float, eyeY: Float, eyeZ: Float,
+        w: Float, h: Float
+    ) {
+        val labelTextSize = (14f * density).coerceIn(24f, 42f)
+        constellationTextPaint.textSize = labelTextSize
+        constellationOutlinePaint.textSize = labelTextSize
+        constellationOutlinePaint.strokeWidth = 3.2f * density
+
+        for (label in constellationLabels) {
+            // Earth occultation test (Earth is sphere at (0,0,0) with radius 10.0f)
+            val dx = label.x - eyeX
+            val dy = label.y - eyeY
+            val dz = label.z - eyeZ
+            val dist = sqrt(dx * dx + dy * dy + dz * dz).coerceAtLeast(0.001f)
+            val ux = dx / dist
+            val uy = dy / dist
+            val uz = dz / dist
+
+            val tClosest = -(eyeX * ux + eyeY * uy + eyeZ * uz)
+            if (tClosest > 0.0f && tClosest < dist) {
+                val px = eyeX + ux * tClosest
+                val py = eyeY + uy * tClosest
+                val pz = eyeZ + uz * tClosest
+                val distCenterSq = px * px + py * py + pz * pz
+                if (distCenterSq < 10.05f * 10.05f) {
+                    continue // Blocked by Earth globe
+                }
+            }
+
+            worldPos[0] = label.x
+            worldPos[1] = label.y
+            worldPos[2] = label.z
+            worldPos[3] = 1.0f
+            Matrix.multiplyMV(clipPos, 0, vpMatrix, 0, worldPos, 0)
+            val clipW = clipPos[3]
+            if (clipW <= 0.1f) continue
+
+            val ndcX = clipPos[0] / clipW
+            val ndcY = clipPos[1] / clipW
+            if (ndcX < -0.92f || ndcX > 0.92f || ndcY < -0.92f || ndcY > 0.92f) continue
+
+            val sx = (ndcX * 0.5f + 0.5f) * w
+            val sy = (1.0f - (ndcY * 0.5f + 0.5f)) * h
+
+            val formattedText = "✦  ${label.name}"
+            canvas.drawText(formattedText, sx, sy, constellationOutlinePaint)
+            canvas.drawText(formattedText, sx, sy, constellationTextPaint)
+        }
+    }
+
     private val flareRayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -258,7 +378,7 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         val toSunLen = sqrt(toSunX * toSunX + toSunY * toSunY + toSunZ * toSunZ).coerceAtLeast(0.001f)
         val dirX = toSunX / toSunLen
         val dirY = toSunY / toSunLen
-        val dirZ = toSunZ / toSunLen
+        val dirZ = toSunLen.let { toSunZ / it }
 
         val tClosest = -(eyeX * dirX + eyeY * dirY + eyeZ * dirZ)
         val occlusionFactor = if (tClosest > 0.0f) {
@@ -310,33 +430,35 @@ class IssGlobeOverlayView @JvmOverloads constructor(
 
         val timeSec = android.os.SystemClock.uptimeMillis() / 1000.0f
 
-        // A. Blinding Solar Glare Core in screen space
-        val glareRadius = 95f * density * totalIntensity
+        // A. Dynamic Soft Blooming Yellow Solar Corona ("von winzig aufblühend, verwaschen, kein harter Rand")
+        val bloomGrowth = totalIntensity * totalIntensity
+        val bloomRadius = (35f + 290f * bloomGrowth) * density * (0.95f + 0.05f * sin(timeSec * 2.4f))
         flareCorePaint.shader = RadialGradient(
-            sunScreenX, sunScreenY, glareRadius,
+            sunScreenX, sunScreenY, bloomRadius,
             intArrayOf(
-                Color.argb((245 * totalIntensity).toInt(), 255, 255, 255),
-                Color.argb((150 * totalIntensity).toInt(), 255, 225, 140),
-                Color.argb((50 * totalIntensity).toInt(), 255, 150, 60),
-                Color.TRANSPARENT
+                Color.argb((255 * totalIntensity).toInt(), 255, 255, 255),
+                Color.argb((215 * totalIntensity).toInt(), 255, 240, 165),
+                Color.argb((115 * totalIntensity).toInt(), 255, 185, 75),
+                Color.argb((35 * totalIntensity).toInt(), 255, 140, 45),
+                Color.argb(0, 255, 120, 30)
             ),
-            floatArrayOf(0.0f, 0.22f, 0.65f, 1.0f),
+            floatArrayOf(0.0f, 0.14f, 0.40f, 0.72f, 1.0f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawCircle(sunScreenX, sunScreenY, glareRadius, flareCorePaint)
+        canvas.drawCircle(sunScreenX, sunScreenY, bloomRadius, flareCorePaint)
 
         // B. Dynamic Shimmering / Dancing Rays ("tänzelnde Strahlen")
         val baseAngle = Math.atan2(flareDy.toDouble(), flareDx.toDouble()).toFloat() + timeSec * 0.12f
         val numSpikes = 12
         for (i in 0 until numSpikes) {
-            val phase = timeSec * 2.8f + i * 1.618f
-            val wobble = sin(phase) * 0.045f
+            val phase = timeSec * 3.0f + i * 1.618f
+            val wobble = sin(phase) * 0.05f
             val spikeAngle = baseAngle + (i.toFloat() / numSpikes) * (Math.PI.toFloat() * 2.0f) + wobble
             val cosA = cos(spikeAngle)
             val sinA = sin(spikeAngle)
 
             val lengthPulse = 0.82f + 0.22f * sin(timeSec * 3.4f + i * 2.1f)
-            val spikeLength = 175f * density * totalIntensity * lengthPulse
+            val spikeLength = (35f + 185f * bloomGrowth) * density * lengthPulse
 
             val endX = sunScreenX + cosA * spikeLength
             val endY = sunScreenY + sinA * spikeLength
@@ -357,26 +479,28 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         }
 
         // C. Anamorphic Horizontal Light Streak across camera viewport
-        val streakHalfWidth = w * 0.85f * totalIntensity
-        val streakHeight = 2.8f * density * (0.88f + 0.12f * sin(timeSec * 4.0f))
-        flareStreakPaint.shader = LinearGradient(
-            sunScreenX - streakHalfWidth, sunScreenY,
-            sunScreenX + streakHalfWidth, sunScreenY,
-            intArrayOf(
-                Color.TRANSPARENT,
-                Color.argb((125 * totalIntensity).toInt(), 120, 200, 255),
-                Color.argb((250 * totalIntensity).toInt(), 255, 255, 255),
-                Color.argb((125 * totalIntensity).toInt(), 120, 200, 255),
-                Color.TRANSPARENT
-            ),
-            floatArrayOf(0.0f, 0.35f, 0.5f, 0.65f, 1.0f),
-            Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(
-            sunScreenX - streakHalfWidth, sunScreenY - streakHeight,
-            sunScreenX + streakHalfWidth, sunScreenY + streakHeight,
-            flareStreakPaint
-        )
+        val streakHalfWidth = w * 0.88f * bloomGrowth
+        val streakHeight = 2.6f * density * (0.88f + 0.12f * sin(timeSec * 4.0f))
+        if (streakHalfWidth > 2f) {
+            flareStreakPaint.shader = LinearGradient(
+                sunScreenX - streakHalfWidth, sunScreenY,
+                sunScreenX + streakHalfWidth, sunScreenY,
+                intArrayOf(
+                    Color.TRANSPARENT,
+                    Color.argb((120 * totalIntensity).toInt(), 120, 200, 255),
+                    Color.argb((245 * totalIntensity).toInt(), 255, 255, 255),
+                    Color.argb((120 * totalIntensity).toInt(), 120, 200, 255),
+                    Color.TRANSPARENT
+                ),
+                floatArrayOf(0.0f, 0.35f, 0.5f, 0.65f, 1.0f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(
+                sunScreenX - streakHalfWidth, sunScreenY - streakHeight,
+                sunScreenX + streakHalfWidth, sunScreenY + streakHeight,
+                flareStreakPaint
+            )
+        }
 
         // D. Optical Lens Ghost Elements along the axis
         val ghosts = arrayOf(
