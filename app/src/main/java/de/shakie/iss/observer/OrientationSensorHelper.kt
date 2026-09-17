@@ -20,17 +20,19 @@ class OrientationSensorHelper(private val context: Context) : SensorEventListene
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        ?: sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION)
+        ?: sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
 
     private val rawRotationMatrix = FloatArray(16)
 
     private var smoothedAzimuth = 0f
     private var smoothedPitch = 0f
     private var smoothedRoll = 0f
+    private var isFirstEvent = true
 
     var onOrientationChanged: ((DeviceOrientation) -> Unit)? = null
 
     fun start() {
+        isFirstEvent = true
         rotationSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
@@ -41,7 +43,9 @@ class OrientationSensorHelper(private val context: Context) : SensorEventListene
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+        if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR ||
+            event.sensor.type == Sensor.TYPE_GAME_ROTATION_VECTOR
+        ) {
             SensorManager.getRotationMatrixFromVector(rawRotationMatrix, event.values)
 
             // The user looks through the rear camera (vector (0, 0, -1) in device coordinates).
@@ -61,10 +65,17 @@ class OrientationSensorHelper(private val context: Context) : SensorEventListene
             // Roll: rotation of device's +X axis around line of sight
             val roll = Math.toDegrees(atan2(rawRotationMatrix[8].toDouble(), rawRotationMatrix[9].toDouble())).toFloat()
 
-            // Smooth with low-pass filter (alpha = 0.25)
-            smoothedAzimuth = smoothAngle(smoothedAzimuth, azimuth, 0.25f)
-            smoothedPitch = smoothedPitch + 0.25f * (pitch - smoothedPitch)
-            smoothedRoll = smoothedRoll + 0.25f * (roll - smoothedRoll)
+            // Instant initialization on first reading to eliminate start-up drift
+            if (isFirstEvent) {
+                smoothedAzimuth = azimuth
+                smoothedPitch = pitch
+                smoothedRoll = roll
+                isFirstEvent = false
+            } else {
+                smoothedAzimuth = smoothAngle(smoothedAzimuth, azimuth, 0.25f)
+                smoothedPitch = smoothedPitch + 0.25f * (pitch - smoothedPitch)
+                smoothedRoll = smoothedRoll + 0.25f * (roll - smoothedRoll)
+            }
 
             onOrientationChanged?.invoke(
                 DeviceOrientation(

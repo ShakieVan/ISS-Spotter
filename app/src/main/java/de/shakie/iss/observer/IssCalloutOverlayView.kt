@@ -132,21 +132,19 @@ class IssCalloutOverlayView @JvmOverloads constructor(
         )
 
         // 3. Draw Artificial Horizon & Compass Marks
-        if (showVirtualSky) {
-            val horizonY = centerY + (orient.pitchDeg / (cameraVfov / 2f)) * (h / 2f)
-            if (horizonY in -50f..(h + 50f)) {
-                canvas.drawLine(0f, horizonY, w, horizonY, horizonLinePaint)
-                val headings = listOf(0f to "N", 90f to "O", 180f to "S", 270f to "W")
-                for ((bearing, label) in headings) {
-                    var dAz = (bearing - orient.azimuthDeg)
-                    while (dAz > 180f) dAz -= 360f
-                    while (dAz < -180f) dAz += 360f
+        val horizonY = centerY + (orient.pitchDeg / (cameraVfov / 2f)) * (h / 2f)
+        if (horizonY in -50f..(h + 50f)) {
+            canvas.drawLine(0f, horizonY, w, horizonY, horizonLinePaint)
+            val headings = listOf(0f to "N", 90f to "O", 180f to "S", 270f to "W")
+            for ((bearing, label) in headings) {
+                var dAz = (bearing - orient.azimuthDeg)
+                while (dAz > 180f) dAz -= 360f
+                while (dAz < -180f) dAz += 360f
 
-                    val markX = centerX + (dAz / (cameraHfov / 2f)) * (w / 2f)
-                    if (markX in 30f..(w - 30f)) {
-                        canvas.drawLine(markX, horizonY - 15f, markX, horizonY + 15f, horizonLinePaint)
-                        canvas.drawText(label, markX, horizonY - 24f, compassTextPaint)
-                    }
+                val markX = centerX + (dAz / (cameraHfov / 2f)) * (w / 2f)
+                if (markX in 30f..(w - 30f)) {
+                    canvas.drawLine(markX, horizonY - 15f, markX, horizonY + 15f, horizonLinePaint)
+                    canvas.drawText(label, markX, horizonY - 24f, compassTextPaint)
                 }
             }
         }
@@ -161,21 +159,40 @@ class IssCalloutOverlayView @JvmOverloads constructor(
         val halfHfov = cameraHfov / 2f
         val halfVfov = cameraVfov / 2f
 
-        val isInFov = abs(deltaAz) <= halfHfov && abs(deltaEl) <= halfVfov && horiz.elevationDeg >= -5.0
+        // ISS is in sight when within camera FOV angles (regardless of elevation)
+        val isInFov = abs(deltaAz) <= halfHfov && abs(deltaEl) <= halfVfov
 
         if (isInFov) {
-            // === ISS IS IN SIGHT ===
+            // === ISS IS IN SIGHT (LOCKED ON) ===
+            val isBelowHorizon = horiz.elevationDeg < 0.0
+            val accentColor = if (isBelowHorizon) Color.parseColor("#FFAA00") else Color.parseColor("#00E5FF")
+            val dotColor = if (isBelowHorizon) Color.parseColor("#FFEAA7") else Color.WHITE
+
+            dotPaint.color = dotColor
+            ringPaint.color = accentColor
+            calloutLinePaint.color = accentColor
+            hudCardBorder.color = accentColor
+
             val screenX = centerX + (deltaAz / halfHfov) * (w * 0.45f)
             val screenY = centerY - (deltaEl / halfVfov) * (h * 0.45f)
 
-            // White dot with targeting ring
+            // White/amber dot with targeting ring
             canvas.drawCircle(screenX, screenY, 6.5f, dotPaint)
             canvas.drawCircle(screenX, screenY, 18f, ringPaint)
+            if (isBelowHorizon) {
+                // Outer dashed aura indicating below horizon
+                canvas.drawCircle(screenX, screenY, 28f, calloutLinePaint)
+            }
 
-            // Bent callout line ("Abgeknickte Linie")
-            val cornerX = screenX + 45f
-            val cornerY = screenY - 45f
-            val endX = cornerX + 180f
+            // Dynamically flip callout line & card near screen edges
+            val cardWidth = 320f
+            val cardHeight = 88f
+            val flipX = (screenX + 45f + cardWidth > w - 16f)
+            val cornerX = if (flipX) screenX - 45f else screenX + 45f
+            val endX = if (flipX) cornerX - 160f else cornerX + 160f
+
+            val flipY = (screenY - 45f - cardHeight < 90f)
+            val cornerY = if (flipY) screenY + 45f else screenY - 45f
             val endY = cornerY
 
             calloutPath.reset()
@@ -184,14 +201,26 @@ class IssCalloutOverlayView @JvmOverloads constructor(
             calloutPath.lineTo(endX, endY)
             canvas.drawPath(calloutPath, calloutLinePaint)
 
-            // Technical HUD label
-            val cardRect = RectF(cornerX + 10f, cornerY - 85f, cornerX + 310f, cornerY - 8f)
+            // Technical HUD label card
+            val cardRect = if (flipX) {
+                RectF(cornerX - cardWidth, cornerY - cardHeight, cornerX - 10f, cornerY - 8f)
+            } else {
+                RectF(cornerX + 10f, cornerY - cardHeight, cornerX + cardWidth, cornerY - 8f)
+            }
             canvas.drawRoundRect(cardRect, 10f, 10f, hudCardFill)
             canvas.drawRoundRect(cardRect, 10f, 10f, hudCardBorder)
 
-            canvas.drawText("ISS", cardRect.left + 16f, cardRect.top + 32f, titleTextPaint)
+            val titleText = if (isBelowHorizon) "ISS (UNTER DEM HORIZONT)" else "ISS"
+            canvas.drawText(titleText, cardRect.left + 16f, cardRect.top + 32f, titleTextPaint)
+
             val distText = String.format("DIST: %.0f km  ALT: %.0f km", horiz.distanceKm, snap.altitudeKm)
-            val statusText = if (snap.isEclipsed) "STATUS: IM ERDSCHATTEN" else "STATUS: SONNENLICHT"
+            val statusText = if (isBelowHorizon) {
+                "STATUS: DURCH DIE ERDE PEILEN"
+            } else if (snap.isEclipsed) {
+                "STATUS: IM ERDSCHATTEN"
+            } else {
+                "STATUS: SONNENLICHT"
+            }
             canvas.drawText(distText, cardRect.left + 16f, cardRect.top + 55f, subtitleTextPaint)
             canvas.drawText(statusText, cardRect.left + 16f, cardRect.top + 73f, subtitleTextPaint)
 
@@ -200,7 +229,7 @@ class IssCalloutOverlayView @JvmOverloads constructor(
             val angleRad = atan2(-deltaEl.toDouble(), deltaAz.toDouble()).toFloat()
             val angleDeg = Math.toDegrees(angleRad.toDouble()).toFloat()
 
-            val margin = 80f
+            val margin = 85f
             val maxRadius = min(w / 2f - margin, h / 2f - margin)
 
             val edgeX = (centerX + cos(angleRad) * maxRadius).coerceIn(margin, w - margin)

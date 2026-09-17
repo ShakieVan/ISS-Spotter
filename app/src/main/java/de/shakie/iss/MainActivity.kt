@@ -307,9 +307,13 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         val horiz = snapshot.horizontal
         if (horiz != null) {
             val elSign = if (horiz.elevationDeg >= 0) "+" else ""
+            val camInfo = if (isObserverMode) {
+                val camElSign = if (currentOrientation.pitchDeg >= 0) "+" else ""
+                String.format("  |  BLICK: %.0f°/%s%.0f°", currentOrientation.azimuthDeg, camElSign, currentOrientation.pitchDeg)
+            } else ""
             binding.tvObserverRelative.text = String.format(
-                "SPEED: %.0f km/h  DIST: %.0f km  AZ/EL: %.0f° / %s%.0f°",
-                snapshot.velocityKmh, horiz.distanceKm, horiz.azimuthDeg, elSign, horiz.elevationDeg
+                "SPEED: %.0f km/h  DIST: %.0f km  ISS: %.0f°/%s%.0f°%s",
+                snapshot.velocityKmh, horiz.distanceKm, horiz.azimuthDeg, elSign, horiz.elevationDeg, camInfo
             )
         } else {
             binding.tvObserverRelative.text = String.format(
