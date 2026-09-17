@@ -1,4 +1,4 @@
-﻿material {
+material {
     name : EarthAtmosphere,
     shadingModel : unlit,
     blending : opaque,
@@ -28,11 +28,30 @@ fragment {
         float NdotV = clamp(dot(normal, eyeDir), 0.0, 1.0);
         float sunDot = dot(normal, sunDir);
 
-        // Day vs Night factor
-        float dayFactor = smoothstep(-0.08, 0.08, sunDot);
-        float nightFactor = 1.0 - dayFactor;
+        // =========================================================
+        // 1. DAY / TWILIGHT / NIGHT TRANSITION & SUNSET SPECTRUM
+        // =========================================================
+        // Ground daylight factor: smooth transition across the terminator [-0.06, 0.08]
+        float dayFactor = smoothstep(-0.06, 0.08, sunDot);
 
-        // Texture samples
+        // Sunset / Sunrise twilight factor: peaks right along the terminator line
+        float sunsetBand = smoothstep(-0.16, -0.01, sunDot) * (1.0 - smoothstep(0.02, 0.16, sunDot));
+
+        // Atmospheric sunset color gradient:
+        // Deep twilight crimson -> fiery orange-red -> golden hour amber -> daylight
+        float sunsetGrad = clamp((sunDot + 0.14) / 0.22, 0.0, 1.0);
+        float3 sunsetColor = mix(
+            float3(0.90, 0.24, 0.10), // Deep twilight crimson
+            float3(1.00, 0.68, 0.22), // Golden hour amber
+            sunsetGrad
+        );
+
+        // Direct sunlight color incorporating sunset reddening near the horizon
+        float3 directSunColor = mix(sunsetColor, float3(1.0, 0.98, 0.95), smoothstep(0.03, 0.18, sunDot));
+
+        // =========================================================
+        // 2. TEXTURE SAMPLES & SURFACE LIGHTING
+        // =========================================================
         float4 daySample = texture(materialParams_dayMap, uv);
         float4 nightSample = texture(materialParams_nightMap, uv);
         float4 borderSample = texture(materialParams_borderMap, uv);
@@ -40,45 +59,99 @@ fragment {
 
         float cloudAlpha = clamp(cloudSample.a * 1.15, 0.0, 1.0);
 
-        // Cloud shadow on Earth surface
+        // Cloud shadow on Earth surface (only in daylight)
         float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
         float shadowCloud = texture(materialParams_cloudMap, shadowUv).a;
         float shadowFactor = 1.0 - smoothstep(0.1, 0.8, shadowCloud) * 0.65 * dayFactor;
 
-        // Specular sun glint on ocean
+        // Specular sun glint on ocean (with golden sunset tinting near terminator)
         float oceanMask = clamp((daySample.b - max(daySample.r, daySample.g) * 0.9) * 4.0, 0.0, 1.0);
         float3 reflected = reflect(-eyeDir, normal);
         float specAngle = max(dot(reflected, sunDir), 0.0);
-        float sunGlint = pow(specAngle, 40.0) * oceanMask * dayFactor * (1.0 - cloudAlpha);
+        float sunGlint = pow(specAngle, 36.0) * oceanMask * dayFactor * (1.0 - cloudAlpha);
+        float3 glintColor = directSunColor * sunGlint * 2.2;
 
-        // Surface: Day surface with shadow & glint vs Night city lights
-        float3 earthDay = daySample.rgb * shadowFactor + float3(1.0, 0.95, 0.8) * sunGlint * 1.5;
-        float3 earthNight = nightSample.rgb * 2.2;
-        float3 surfaceColor = mix(earthNight, earthDay, dayFactor);
+        // Night city lights occlusion by clouds:
+        // When clouds are dense, city lights are dimmed/blocked from reaching space!
+        float cloudLightBlock = smoothstep(0.12, 0.85, cloudAlpha) * 0.85; // Up to 85% blocked
+        float3 nightLights = nightSample.rgb * 2.6 * (1.0 - cloudLightBlock);
+        // Soft under-cloud city light scatter (subtle diffuse glow on cloud bottom)
+        float3 cityUnderGlow = nightSample.rgb * 0.35 * cloudAlpha;
+
+        // Day surface with sunset tint & glint vs Night city lights
+        float3 surfaceDay = daySample.rgb * shadowFactor * directSunColor + glintColor;
+        float3 surfaceNight = nightLights;
+        float3 surfaceColor = mix(surfaceNight, surfaceDay, dayFactor);
 
         // Optional borders & labels
         if (materialParams.showBorders > 0.01) {
             surfaceColor = mix(surfaceColor, borderSample.rgb, borderSample.a * 0.65 * materialParams.showBorders);
         }
 
-        // 3D Clouds
-        float stormHeight = smoothstep(0.4, 0.9, cloudAlpha) * materialParams.cloudRelief;
-        float cloudSun = max(sunDot + stormHeight * 0.15, 0.05);
-        float3 cloudDayColor = float3(0.96, 0.98, 1.0) * cloudSun * (1.0 + stormHeight * 0.25);
-        float3 cloudNightColor = nightSample.rgb * 0.70 + float3(0.012, 0.022, 0.038);
+        // =========================================================
+        // 3. REALISTIC 3D CLOUDS (DAY, SUNSET & NIGHT)
+        // =========================================================
+        // Cloud lighting geometry: cloud tops (altitude 10 km) catch sun down to sunDot = -0.12
+        float cloudSunDot = sunDot + 0.06;
+        float cloudSunFactor = smoothstep(-0.14, 0.12, cloudSunDot);
 
-        float3 cloudColor = mix(cloudNightColor, cloudDayColor, dayFactor);
+        float stormHeight = smoothstep(0.4, 0.9, cloudAlpha) * materialParams.cloudRelief;
+        float cloudDiffuse = max(sunDot + stormHeight * 0.20, 0.0);
+
+        // Daylight clouds: crisp white with relief shading
+        float3 cloudDayColor = float3(0.96, 0.98, 1.0) * (cloudDiffuse * 0.90 + 0.10) * (1.0 + stormHeight * 0.28);
+
+        // Sunset / Twilight clouds: illuminated by long-path reddened sunlight
+        float3 cloudSunsetColor = sunsetColor * (1.25 + stormHeight * 0.35);
+        float cloudSunsetMix = smoothstep(-0.12, 0.03, sunDot) * (1.0 - smoothstep(0.04, 0.20, sunDot));
+
+        // Combined sunlit cloud color
+        float3 cloudLitColor = mix(cloudDayColor, cloudSunsetColor, cloudSunsetMix * 0.92);
+
+        // Night side clouds: softly illuminated by starlight / moonlight / airglow
+        // Visible silvery-blue tint so clouds seamlessly continue across the night side!
+        float3 cloudNightColor = float3(0.028, 0.042, 0.065) + cityUnderGlow;
+
+        // Final cloud color blended smoothly across terminator into night
+        float3 cloudColor = mix(cloudNightColor, cloudLitColor, cloudSunFactor);
+
+        // Apply clouds over Earth surface
         surfaceColor = mix(surfaceColor, cloudColor, cloudAlpha);
 
-        // Atmospheric Rayleigh Scattering at horizon
+        // =========================================================
+        // 4. ATMOSPHERE: RAYLEIGH SCATTERING & SUNSET GLOW
+        // =========================================================
+        // Rim angle (1.0 at planetary limb / horizon, 0.0 at center disk)
         float rim = 1.0 - NdotV;
-        float rimAtmosphere = pow(rim, 5.5) * max(sunDot + 0.35, 0.06) * 1.8;
-        float3 atmosphereGlow = float3(0.25, 0.60, 1.0) * rimAtmosphere;
 
-        // Subtle daylight forward haze
-        float forwardHaze = pow(rim, 2.8) * max(sunDot, 0.0) * 0.28;
-        float3 hazeColor = float3(0.35, 0.70, 1.0) * forwardHaze;
+        // A. Primary Atmospheric Limb Halo (the iconic "thin blue line" of Earth)
+        float limbIntensity = pow(rim, 2.7) * 2.1;
 
-        material.baseColor = float4(surfaceColor + atmosphereGlow + hazeColor, 1.0);
+        // Daytime electric blue Rayleigh scattering
+        float3 rayleighBlue = float3(0.18, 0.58, 1.0);
+
+        // Sunset rim color: fiery orange/crimson along the terminator limb
+        float limbSunsetFactor = smoothstep(-0.18, 0.02, sunDot) * (1.0 - smoothstep(0.02, 0.22, sunDot));
+        float3 limbSunsetColor = mix(float3(0.96, 0.26, 0.08), float3(1.00, 0.62, 0.16), sunsetGrad);
+
+        // Combined limb color: electric blue on day side, fiery sunset at terminator, soft deep navy airglow at night
+        float3 limbColor = mix(rayleighBlue, limbSunsetColor, limbSunsetFactor * 0.95);
+        float3 airglowNight = float3(0.025, 0.065, 0.095);
+        float3 activeLimbColor = mix(airglowNight, limbColor, smoothstep(-0.25, 0.05, sunDot));
+
+        float3 atmosphereGlow = activeLimbColor * limbIntensity * (0.16 + 0.84 * max(sunDot + 0.22, 0.0));
+
+        // B. Forward Atmospheric Haze over the sunlit hemisphere
+        float forwardHaze = pow(rim, 1.5) * max(sunDot, 0.0) * 0.24;
+        float3 hazeColor = float3(0.28, 0.62, 1.0) * forwardHaze;
+
+        // C. Twilight Terminator Arc (glow on the surface and low atmosphere along the day/night boundary)
+        float terminatorGlow = pow(sunsetBand, 1.2) * pow(1.0 - abs(NdotV - 0.5), 1.5) * 0.40;
+        float3 terminatorAtmosphere = sunsetColor * terminatorGlow;
+
+        // Final Composite Color
+        float3 finalColor = surfaceColor + atmosphereGlow + hazeColor + terminatorAtmosphere;
+
+        material.baseColor = float4(finalColor, 1.0);
     }
 }
