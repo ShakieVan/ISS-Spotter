@@ -46,7 +46,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             setupLocationUpdates()
         }
         if (permissions[Manifest.permission.CAMERA] == true) {
-            setupCamera()
+            if (isObserverMode && !binding.calloutOverlayView.showVirtualSky) {
+                startCameraPreview()
+            }
         }
     }
 
@@ -103,10 +105,37 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
         // Toggle virtual sky vs AR camera in Observer Mode
         binding.btnToggleSkyMode.setOnClickListener {
-            val currentVirtual = binding.calloutOverlayView.showVirtualSky
-            binding.calloutOverlayView.showVirtualSky = !currentVirtual
-            binding.cameraPreview.visibility = if (binding.calloutOverlayView.showVirtualSky) View.GONE else View.VISIBLE
-            binding.btnToggleSkyMode.text = if (binding.calloutOverlayView.showVirtualSky) "✦ Modus: HIMMEL" else "✦ Modus: AR-KAMERA"
+            val toVirtualSky = !binding.calloutOverlayView.showVirtualSky
+            binding.calloutOverlayView.showVirtualSky = toVirtualSky
+            if (toVirtualSky) {
+                // User switched to Virtual Sky (no camera, dark starry sky)
+                arCameraManager?.stopCamera()
+                binding.cameraPreview.visibility = View.GONE
+                binding.btnToggleSkyMode.text = "✦ AR-Kamera"
+            } else {
+                // User switched to AR-Camera (live camera background)
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    binding.cameraPreview.visibility = View.VISIBLE
+                    binding.btnToggleSkyMode.text = "✦ Sternenhimmel"
+                    startCameraPreview()
+                } else {
+                    permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+                }
+            }
+        }
+    }
+
+    private fun updateModeButtonsUi(isObserver: Boolean) {
+        if (!isObserver) {
+            binding.btnModeIss.setBackgroundResource(R.drawable.bg_hud_button_active)
+            binding.btnModeIss.setTextColor(Color.WHITE)
+            binding.btnModeObserver.setBackgroundResource(R.drawable.bg_hud_button_inactive)
+            binding.btnModeObserver.setTextColor(Color.parseColor("#8FAEC8"))
+        } else {
+            binding.btnModeObserver.setBackgroundResource(R.drawable.bg_hud_button_active)
+            binding.btnModeObserver.setTextColor(Color.WHITE)
+            binding.btnModeIss.setBackgroundResource(R.drawable.bg_hud_button_inactive)
+            binding.btnModeIss.setTextColor(Color.parseColor("#8FAEC8"))
         }
     }
 
@@ -114,19 +143,26 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         isObserverMode = false
         binding.issViewContainer.visibility = View.VISIBLE
         binding.observerViewContainer.visibility = View.GONE
-        binding.btnModeIss.setTextColor(Color.WHITE)
-        binding.btnModeObserver.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+        updateModeButtonsUi(isObserver = false)
+        arCameraManager?.stopCamera()
     }
 
     private fun switchToObserverMode() {
         isObserverMode = true
         binding.issViewContainer.visibility = View.GONE
         binding.observerViewContainer.visibility = View.VISIBLE
-        binding.btnModeObserver.setTextColor(Color.WHITE)
-        binding.btnModeIss.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+        updateModeButtonsUi(isObserver = true)
 
-        if (arCameraManager == null) {
-            setupCamera()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            binding.calloutOverlayView.showVirtualSky = false
+            binding.cameraPreview.visibility = View.VISIBLE
+            binding.btnToggleSkyMode.text = "✦ Sternenhimmel"
+            startCameraPreview()
+        } else {
+            binding.calloutOverlayView.showVirtualSky = true
+            binding.cameraPreview.visibility = View.GONE
+            binding.btnToggleSkyMode.text = "✦ AR-Kamera"
+            permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
         }
     }
 
@@ -157,7 +193,6 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             permissionLauncher.launch(permissions.toTypedArray())
         } else {
             setupLocationUpdates()
-            setupCamera()
         }
     }
 
@@ -189,16 +224,24 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         issTracker.observerAltKm = loc.altitude / 1000.0
     }
 
-    private fun setupCamera() {
-        arCameraManager = ArCameraManager(
-            context = this,
-            lifecycleOwner = this,
-            previewView = binding.cameraPreview
-        ) { isCameraActive ->
-            if (!isCameraActive) {
-                binding.calloutOverlayView.showVirtualSky = true
-                binding.cameraPreview.visibility = View.GONE
-                binding.btnToggleSkyMode.text = "✦ Modus: HIMMEL"
+    private fun startCameraPreview() {
+        if (arCameraManager == null) {
+            arCameraManager = ArCameraManager(
+                context = this,
+                lifecycleOwner = this,
+                previewView = binding.cameraPreview
+            ) { isCameraActive ->
+                runOnUiThread {
+                    if (isCameraActive) {
+                        binding.calloutOverlayView.showVirtualSky = false
+                        binding.cameraPreview.visibility = View.VISIBLE
+                        binding.btnToggleSkyMode.text = "✦ Sternenhimmel"
+                    } else {
+                        binding.calloutOverlayView.showVirtualSky = true
+                        binding.cameraPreview.visibility = View.GONE
+                        binding.btnToggleSkyMode.text = "✦ AR-Kamera"
+                    }
+                }
             }
         }
         arCameraManager?.startCamera()
@@ -207,12 +250,20 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     override fun onResume() {
         super.onResume()
         orientationHelper.start()
+        if (isObserverMode && !binding.calloutOverlayView.showVirtualSky &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        ) {
+            startCameraPreview()
+        }
         Choreographer.getInstance().postFrameCallback(this)
     }
 
     override fun onPause() {
         super.onPause()
         orientationHelper.stop()
+        if (isObserverMode) {
+            arCameraManager?.stopCamera()
+        }
         Choreographer.getInstance().removeFrameCallback(this)
     }
 

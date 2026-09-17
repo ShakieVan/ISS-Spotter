@@ -114,8 +114,8 @@ class IssCalloutOverlayView @JvmOverloads constructor(
 
         // 2. Draw Realistic Starry Sky with Seasonal Constellations!
         // (Visible in Virtual Sky mode or as celestial overlay above horizon)
-        val obsLat = 52.5200 // Will default or use actual observer
-        val obsLon = 13.4050
+        val obsLat = snap.observerLat
+        val obsLon = snap.observerLon
         skyRenderer.draw(
             canvas = canvas,
             w = w,

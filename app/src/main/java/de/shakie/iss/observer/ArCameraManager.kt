@@ -40,23 +40,33 @@ class ArCameraManager(
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
 
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            val cameraSelector = if (provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                CameraSelector.DEFAULT_BACK_CAMERA
+            } else if (provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                CameraSelector.DEFAULT_FRONT_CAMERA
+            } else {
+                null
+            }
 
-            if (provider.hasCamera(cameraSelector)) {
+            if (cameraSelector != null) {
                 provider.bindToLifecycle(lifecycleOwner, cameraSelector, preview)
                 onCameraState(true)
                 Log.i("ArCameraManager", "CameraX preview bound successfully")
             } else {
-                Log.w("ArCameraManager", "No back camera found (e.g. running in basic emulator)")
+                Log.w("ArCameraManager", "No camera found on device")
                 onCameraState(false)
             }
         } catch (e: Exception) {
-            Log.w("ArCameraManager", "Camera binding failed: ${e.message}")
+            Log.e("ArCameraManager", "Camera binding failed: ${e.message}", e)
             onCameraState(false)
         }
     }
 
     fun stopCamera() {
-        cameraProvider?.unbindAll()
+        try {
+            cameraProvider?.unbindAll()
+        } catch (e: Exception) {
+            Log.w("ArCameraManager", "Error stopping camera: ${e.message}")
+        }
     }
 }

@@ -22,7 +22,9 @@ data class IssSnapshot(
     val sun: SunPosition,
     val horizontal: HorizontalCoordinates?,
     val nextPass: IssPass?,
-    val timestampMillis: Long
+    val timestampMillis: Long,
+    val observerLat: Double = 52.5200,
+    val observerLon: Double = 13.4050
 )
 
 class IssTracker(private val context: Context) {
@@ -132,7 +134,9 @@ class IssTracker(private val context: Context) {
             sun = sun,
             horizontal = horizontal,
             nextPass = cachedNextPass,
-            timestampMillis = timeMillis
+            timestampMillis = timeMillis,
+            observerLat = observerLat ?: 52.5200,
+            observerLon = observerLon ?: 13.4050
         )
     }
 

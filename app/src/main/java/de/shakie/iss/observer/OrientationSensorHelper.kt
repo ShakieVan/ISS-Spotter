@@ -23,8 +23,6 @@ class OrientationSensorHelper(private val context: Context) : SensorEventListene
         ?: sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION)
 
     private val rawRotationMatrix = FloatArray(16)
-    private val remappedMatrix = FloatArray(16)
-    private val orientationAngles = FloatArray(3)
 
     private var smoothedAzimuth = 0f
     private var smoothedPitch = 0f
@@ -46,22 +44,22 @@ class OrientationSensorHelper(private val context: Context) : SensorEventListene
         if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
             SensorManager.getRotationMatrixFromVector(rawRotationMatrix, event.values)
 
-            // Remap for portrait display orientation
-            SensorManager.remapCoordinateSystem(
-                rawRotationMatrix,
-                SensorManager.AXIS_X,
-                SensorManager.AXIS_Z,
-                remappedMatrix
-            )
+            // The user looks through the rear camera (vector (0, 0, -1) in device coordinates).
+            // Transforming (0, 0, -1) into world East-North-Up coordinates via rawRotationMatrix R:
+            // V_world = R * [0, 0, -1]^T = [-R[2], -R[6], -R[10]]
+            val camEast = -rawRotationMatrix[2].toDouble()
+            val camNorth = -rawRotationMatrix[6].toDouble()
+            val camUp = -rawRotationMatrix[10].toDouble().coerceIn(-1.0, 1.0)
 
-            SensorManager.getOrientation(remappedMatrix, orientationAngles)
+            // Pitch: elevation angle above horizon (-90 deg looking down, 0 deg horizon, +90 deg zenith)
+            val pitch = Math.toDegrees(asin(camUp)).toFloat()
 
-            // Convert to degrees
-            var azimuth = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
-            if (azimuth < 0) azimuth += 360.0f
-            // Pitch: when phone is pointing directly up to the zenith, pitch is ~ +90 degrees
-            val pitch = Math.toDegrees(orientationAngles[1].toDouble()).toFloat()
-            val roll = Math.toDegrees(orientationAngles[2].toDouble()).toFloat()
+            // Azimuth: compass bearing of the rear camera (0 = North, 90 = East, 180 = South, 270 = West)
+            var azimuth = Math.toDegrees(atan2(camEast, camNorth)).toFloat()
+            if (azimuth < 0f) azimuth += 360f
+
+            // Roll: rotation of device's +X axis around line of sight
+            val roll = Math.toDegrees(atan2(rawRotationMatrix[8].toDouble(), rawRotationMatrix[9].toDouble())).toFloat()
 
             // Smooth with low-pass filter (alpha = 0.25)
             smoothedAzimuth = smoothAngle(smoothedAzimuth, azimuth, 0.25f)
@@ -73,7 +71,7 @@ class OrientationSensorHelper(private val context: Context) : SensorEventListene
                     azimuthDeg = smoothedAzimuth,
                     pitchDeg = smoothedPitch,
                     rollDeg = smoothedRoll,
-                    rotationMatrix = remappedMatrix.clone()
+                    rotationMatrix = rawRotationMatrix.clone()
                 )
             )
         }
