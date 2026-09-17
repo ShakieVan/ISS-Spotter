@@ -304,9 +304,56 @@ class IssFilamentView @JvmOverloads constructor(
         }
     }
 
+    var onCameraModified: ((Boolean) -> Unit)? = null
+
+    private val scaleDetector = android.view.ScaleGestureDetector(context, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
+            val factor = detector.scaleFactor
+            if (factor > 0.01f) {
+                cameraController.zoomFactor = (cameraController.zoomFactor / factor).coerceIn(0.35f, 3.5f)
+                onCameraModified?.invoke(cameraController.isModified())
+            }
+            return true
+        }
+    })
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Erstmal nur automatischer Blickwinkel (Umsehen-Funktion für später)
+        scaleDetector.onTouchEvent(event)
+        if (scaleDetector.isInProgress) {
+            isDragging = false
+            return true
+        }
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                lastTouchX = event.x
+                lastTouchY = event.y
+                isDragging = true
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (isDragging && event.pointerCount == 1) {
+                    val dx = event.x - lastTouchX
+                    val dy = event.y - lastTouchY
+                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg - dx * 0.28f).mod(360f)
+                    cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.28f).coerceIn(-85f, 85f)
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                    onCameraModified?.invoke(cameraController.isModified())
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isDragging = false
+                return true
+            }
+        }
         return super.onTouchEvent(event)
+    }
+
+    fun resetCameraView() {
+        cameraController.reset()
+        onCameraModified?.invoke(false)
     }
 
     // === UiHelper.RendererCallback Implementation ===

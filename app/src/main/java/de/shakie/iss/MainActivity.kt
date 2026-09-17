@@ -103,6 +103,18 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             binding.btnToggleBorders.text = if (bordersVisible) "🌐 Grenzen: AN" else "🌐 Grenzen: AUS"
         }
 
+        // Camera look-around interaction & reset
+        binding.filamentView.onCameraModified = { modified ->
+            runOnUiThread {
+                binding.btnResetOrbitView.visibility = if (modified) View.VISIBLE else View.GONE
+            }
+        }
+
+        binding.btnResetOrbitView.setOnClickListener {
+            binding.filamentView.resetCameraView()
+            binding.btnResetOrbitView.visibility = View.GONE
+        }
+
         // Toggle virtual sky vs AR camera in Observer Mode
         binding.btnToggleSkyMode.setOnClickListener {
             val toVirtualSky = !binding.calloutOverlayView.showVirtualSky

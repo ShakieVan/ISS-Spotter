@@ -240,4 +240,42 @@ class OrbitMathTest {
         assertEquals(218f, issAz, 1.0f)
         assertEquals(-46f, issPitch, 1.0f)
     }
+
+    @Test
+    fun testOrbitCameraController() {
+        val lat = 38.56
+        val lon = -152.38
+        val altKm = 424.4
+        val earthRadius = 10.0f
+        val issAltitudeScale = earthRadius * (altKm.toFloat() / 6371.0f)
+        val issRadius = earthRadius + issAltitudeScale
+
+        val issLatRad = Math.toRadians(lat).toFloat()
+        val issLonRad = Math.toRadians(lon).toFloat()
+
+        val issX = issRadius * cos(issLatRad) * cos(issLonRad)
+        val issY = issRadius * sin(issLatRad)
+        val issZ = issRadius * cos(issLatRad) * sin(issLonRad)
+
+        val issPos = floatArrayOf(issX, issY, issZ)
+        val cam = de.shakie.iss.graphics.OrbitCameraController()
+        assertFalse(cam.isModified())
+
+        val defaultPose = cam.computeCameraPose(issPos, floatArrayOf(0f, 0f, 0f))
+        assertEquals(9, defaultPose.size)
+
+        // Modify yaw and check isModified
+        cam.yawOffsetDeg = 45f
+        assertTrue(cam.isModified())
+
+        val rotatedPose = cam.computeCameraPose(issPos, floatArrayOf(0f, 0f, 0f))
+        assertEquals(9, rotatedPose.size)
+
+        // Reset
+        cam.reset()
+        assertFalse(cam.isModified())
+        assertEquals(0f, cam.yawOffsetDeg, 1e-4f)
+        assertEquals(0f, cam.pitchOffsetDeg, 1e-4f)
+        assertEquals(1.0f, cam.zoomFactor, 1e-4f)
+    }
 }

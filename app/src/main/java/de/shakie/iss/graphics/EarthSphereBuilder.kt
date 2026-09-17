@@ -90,15 +90,15 @@ object EarthSphereBuilder {
                 val first = i * (lonSegments + 1) + j
                 val second = first + lonSegments + 1
 
-                // First triangle
+                // First triangle (CCW viewed from outside)
                 indexBufferData.put(first)
-                indexBufferData.put(second)
                 indexBufferData.put(first + 1)
+                indexBufferData.put(second)
 
-                // Second triangle
+                // Second triangle (CCW viewed from outside)
                 indexBufferData.put(second)
-                indexBufferData.put(second + 1)
                 indexBufferData.put(first + 1)
+                indexBufferData.put(second + 1)
             }
         }
 

@@ -29,7 +29,24 @@
             android:layout_gravity="end|bottom"
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="16dp"
+            android:gravity="end"
             android:orientation="vertical">
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btnResetOrbitView"
+                android:layout_width="wrap_content"
+                android:layout_height="38dp"
+                android:layout_marginBottom="8dp"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:background="@drawable/bg_hud_button"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="⟲ Ansicht zurücksetzen"
+                android:textAllCaps="false"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:visibility="gone" />
 
             <androidx.appcompat.widget.AppCompatButton
                 android:id="@+id/btnToggleBorders"

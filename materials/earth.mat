@@ -83,11 +83,6 @@ fragment {
         float3 surfaceNight = nightLights;
         float3 surfaceColor = mix(surfaceNight, surfaceDay, dayFactor);
 
-        // Optional borders & labels
-        if (materialParams.showBorders > 0.01) {
-            surfaceColor = mix(surfaceColor, borderSample.rgb, borderSample.a * 0.65 * materialParams.showBorders);
-        }
-
         // =========================================================
         // 3. REALISTIC 3D CLOUDS (DAY, SUNSET & NIGHT)
         // =========================================================
@@ -108,9 +103,9 @@ fragment {
         // Combined sunlit cloud color
         float3 cloudLitColor = mix(cloudDayColor, cloudSunsetColor, cloudSunsetMix * 0.92);
 
-        // Night side clouds: softly illuminated by starlight / moonlight / airglow
-        // Visible silvery-blue tint so clouds seamlessly continue across the night side!
-        float3 cloudNightColor = float3(0.028, 0.042, 0.065) + cityUnderGlow;
+        // Night side clouds (in Earth's shadow):
+        // Darkened by Earth shadow, but remaining softly visible by starlight / airglow + city underglow
+        float3 cloudNightColor = float3(0.038, 0.052, 0.076) * 1.4 + cityUnderGlow;
 
         // Final cloud color blended smoothly across terminator into night
         float3 cloudColor = mix(cloudNightColor, cloudLitColor, cloudSunFactor);
@@ -149,8 +144,31 @@ fragment {
         float terminatorGlow = pow(sunsetBand, 1.2) * pow(1.0 - abs(NdotV - 0.5), 1.5) * 0.40;
         float3 terminatorAtmosphere = sunsetColor * terminatorGlow;
 
-        // Final Composite Color
+        // Final Composite Color (Surface + Clouds + Atmosphere)
         float3 finalColor = surfaceColor + atmosphereGlow + hazeColor + terminatorAtmosphere;
+
+        // =========================================================
+        // 5. INVERTED HIGH-CONTRAST BORDERS & COUNTRY LABELS
+        // =========================================================
+        if (materialParams.showBorders > 0.01 && borderSample.a > 0.005) {
+            // Luminance of the underlying pixel (surface, clouds, city lights, atmosphere)
+            float bgLum = dot(finalColor, float3(0.299, 0.587, 0.114));
+
+            // Dynamic inverted color of the underlying surface
+            float3 invertedColor = float3(1.0) - finalColor;
+
+            // Guaranteed high-contrast target (pure dark charcoal on bright surfaces, luminous bright on dark)
+            float3 highContrast = (bgLum > 0.38) 
+                ? float3(0.04, 0.06, 0.08) 
+                : float3(0.96, 0.98, 1.00);
+
+            // Blend inverted with high-contrast target for maximum legibility and style
+            float3 borderCol = mix(invertedColor, highContrast, 0.70);
+
+            // Border alpha with smooth antialiasing
+            float borderAlpha = clamp(borderSample.a * 1.6, 0.0, 1.0) * materialParams.showBorders;
+            finalColor = mix(finalColor, borderCol, borderAlpha);
+        }
 
         material.baseColor = float4(finalColor, 1.0);
     }
