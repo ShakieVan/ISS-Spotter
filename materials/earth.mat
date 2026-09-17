@@ -71,9 +71,17 @@ fragment {
         float gapSuppression = smoothstep(0.002, 0.040, datelineDist);
         float filteredCloud = (rawCloud > 0.86) ? mix(rawCloud * 0.35, rawCloud, gapSuppression) : rawCloud;
 
-        // Polar fade to avoid infrared ground-freeze whiteout over Antarctica and Arctic ice sheets
-        float poleDist = abs(uv.y - 0.5) * 2.0;
-        float poleMask = 1.0 - smoothstep(0.68, 0.94, poleDist);
+        // Polar fade to eliminate satellite infrared whiteout and missing polar data:
+        // Geostationary satellites sit above the equator and have severe coverage distortion/artifacts beyond 50 degrees.
+        // The natural NASA Blue Marble day texture already provides detailed photorealistic ice caps for Antarctica and the Arctic.
+        float southPoleDist = max((uv.y - 0.5) * 2.0, 0.0); // 0 at equator, 1 at South Pole (-90°)
+        float northPoleDist = max((0.5 - uv.y) * 2.0, 0.0); // 0 at equator, 1 at North Pole (+90°)
+        
+        // South pole: smooth fade starting at 44° S, fully 0 by 56° S (eliminates Antarctic/Southern Ocean sensor whiteout)
+        float southMask = 1.0 - smoothstep(0.48, 0.62, southPoleDist);
+        // North pole: smooth fade starting at 52° N, fully 0 by 66° N (eliminates Arctic missing data whiteout)
+        float northMask = 1.0 - smoothstep(0.57, 0.73, northPoleDist);
+        float poleMask = northMask * southMask;
 
         // Clean cloud alpha curve: eliminates low-level ocean grey floor (<0.34) and caps at 0.82 to prevent snowballs
         float cloudAlpha = smoothstep(0.34, 0.86, filteredCloud) * 0.82 * poleMask * materialParams.showClouds;
@@ -95,14 +103,14 @@ fragment {
         // Night city lights occlusion by clouds:
         // When clouds are dense, city lights are dimmed/blocked from reaching space!
         float cloudLightBlock = smoothstep(0.15, 0.85, cloudAlpha) * 0.85;
-        float3 nightLights = nightSample.rgb * 2.6 * (1.0 - cloudLightBlock);
+        float3 nightLights = nightSample.rgb * 2.8 * (1.0 - cloudLightBlock);
         // Soft under-cloud city light scatter (subtle diffuse glow on cloud bottom)
         float3 cityUnderGlow = nightSample.rgb * 0.35 * cloudAlpha;
 
         // Day surface with sunset tint & glint vs Night city lights
         float3 surfaceDay = daySample.rgb * shadowFactor * directSunColor + glintColor;
-        // Night terrain ambient starlight/airglow: continents and oceans remain softly discernible from orbit
-        float3 nightAmbient = daySample.rgb * 0.085 * float3(0.55, 0.70, 0.95);
+        // Night terrain ambient starlight/airglow: darkened by > factor 2 for realistic night depth in space
+        float3 nightAmbient = daySample.rgb * 0.035 * float3(0.40, 0.55, 0.80);
         float3 surfaceNight = nightLights + nightAmbient;
         float3 surfaceColor = mix(surfaceNight, surfaceDay, dayFactor);
 
@@ -126,8 +134,8 @@ fragment {
         // Combined sunlit cloud color
         float3 cloudLitColor = mix(cloudDayColor, cloudSunsetColor, cloudSunsetMix * 0.92);
 
-        // Night side clouds (in Earth's shadow):
-        float3 cloudNightColor = float3(0.038, 0.052, 0.076) * 1.4 + cityUnderGlow;
+        // Night side clouds (in Earth's shadow): darkened by factor 2.5
+        float3 cloudNightColor = float3(0.012, 0.018, 0.026) + cityUnderGlow;
 
         // Final cloud color blended smoothly across terminator into night
         float3 cloudColor = mix(cloudNightColor, cloudLitColor, cloudSunFactor);
@@ -153,13 +161,13 @@ fragment {
 
         // Combined limb color: electric blue on day side, fiery sunset at terminator, soft deep navy airglow at night
         float3 limbColor = mix(rayleighBlue, limbSunsetColor, limbSunsetFactor * 0.95);
-        float3 airglowNight = float3(0.025, 0.065, 0.095);
+        float3 airglowNight = float3(0.008, 0.020, 0.035);
         float3 activeLimbColor = mix(airglowNight, limbColor, smoothstep(-0.25, 0.05, sunDot));
 
         float3 atmosphereGlow = activeLimbColor * limbIntensity * (0.16 + 0.84 * max(sunDot + 0.22, 0.0));
 
-        // Twilight Terminator Arc (glow along the day/night boundary)
-        float terminatorGlow = pow(sunsetBand, 1.5) * 0.15;
+        // Twilight Terminator Arc: only visible along the grazing limb/horizon, not flat on the ground
+        float terminatorGlow = pow(sunsetBand, 1.5) * pow(rim, 16.0) * 0.20;
         float3 terminatorAtmosphere = sunsetColor * terminatorGlow;
 
         // Final Composite Color: pure crystal-clear surface + clouds, with crisp horizon edge

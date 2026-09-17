@@ -139,7 +139,7 @@ class IssFilamentView @JvmOverloads constructor(
         try {
             val ibl = IndirectLight.Builder()
                 .irradiance(1, floatArrayOf(0.75f, 0.88f, 1.05f))
-                .intensity(35_000.0f)
+                .intensity(10_000.0f)
                 .build(engine)
             indirectLight = ibl
             scene.indirectLight = ibl
@@ -430,9 +430,16 @@ class IssFilamentView @JvmOverloads constructor(
         val lightInstance = lightManager.getInstance(sunEntity)
         if (lightInstance != 0) {
             lightManager.setDirection(lightInstance, -sun.vectorX, -sun.vectorY, -sun.vectorZ)
-            val effectiveIntensity = 1400.0f + sunlight * 108_600.0f
+            // Fully dark directional sunlight when in Earth's shadow (0 lux), full sun (110,000 lux) in daylight
+            val effectiveIntensity = sunlight * 110_000.0f
             lightManager.setIntensity(lightInstance, effectiveIntensity)
         }
+
+        // Ambient starlight / Earthshine on ISS:
+        // In shadow: deep dark starlight (~250 lux) so ISS is dark like real space
+        // In sunlight: ~10,000 lux diffuse earthshine on the bottom of the station
+        val ambientIntensity = 250.0f + sunlight * 9750.0f
+        indirectLight?.intensity = ambientIntensity
 
         // 3. Compute 3D Positions for ISS and Observer
         val earthRadius = 10.0f
