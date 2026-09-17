@@ -62,26 +62,30 @@ fragment {
         float4 borderSample = texture(materialParams_borderMap, uv);
         float4 cloudSample = texture(materialParams_cloudMap, uv);
 
-        // Dual-mode cloud density: Supports both RGBA live clouds and RGB offline JPEG assets
-        float cloudDensity = (cloudSample.a < 0.99) ? cloudSample.a : cloudSample.r;
-        float cloudAlpha = clamp(cloudDensity * 1.15, 0.0, 1.0);
+        // Natural cloud density curve: Supports RGBA live clouds and RGB offline textures.
+        // Applies a non-linear threshold so clear sky / ocean is truly 100% clear.
+        float rawCloud = (cloudSample.a < 0.99 && cloudSample.a > 0.01) ? cloudSample.a : cloudSample.r;
+        float poleDist = abs(uv.y - 0.5) * 2.0;
+        float poleMask = 1.0 - smoothstep(0.80, 0.96, poleDist);
+        float cloudAlpha = smoothstep(0.22, 0.82, rawCloud) * poleMask;
 
         // Cloud shadow on Earth surface (only in daylight)
         float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
         float4 shadowSample = texture(materialParams_cloudMap, shadowUv);
-        float shadowCloud = (shadowSample.a < 0.99) ? shadowSample.a : shadowSample.r;
-        float shadowFactor = 1.0 - smoothstep(0.1, 0.8, shadowCloud) * 0.65 * dayFactor;
+        float rawShadow = (shadowSample.a < 0.99 && shadowSample.a > 0.01) ? shadowSample.a : shadowSample.r;
+        float shadowAlpha = smoothstep(0.22, 0.82, rawShadow);
+        float shadowFactor = 1.0 - shadowAlpha * 0.70 * max(sunDot, 0.0);
 
         // Specular sun glint on ocean (with golden sunset tinting near terminator)
-        float oceanMask = clamp((daySample.b - max(daySample.r, daySample.g) * 0.9) * 4.0, 0.0, 1.0);
+        float oceanMask = clamp((daySample.b - max(daySample.r, daySample.g) * 0.85) * 4.0, 0.0, 1.0);
         float3 reflected = reflect(-eyeDir, normal);
         float specAngle = max(dot(reflected, sunDir), 0.0);
-        float sunGlint = pow(specAngle, 36.0) * oceanMask * dayFactor * (1.0 - cloudAlpha);
-        float3 glintColor = directSunColor * sunGlint * 2.2;
+        float sunGlint = pow(specAngle, 45.0) * oceanMask * max(sunDot, 0.0) * (1.0 - cloudAlpha);
+        float3 glintColor = directSunColor * sunGlint * 2.8;
 
         // Night city lights occlusion by clouds:
         // When clouds are dense, city lights are dimmed/blocked from reaching space!
-        float cloudLightBlock = smoothstep(0.12, 0.85, cloudAlpha) * 0.85; // Up to 85% blocked
+        float cloudLightBlock = smoothstep(0.15, 0.85, cloudAlpha) * 0.85;
         float3 nightLights = nightSample.rgb * 2.6 * (1.0 - cloudLightBlock);
         // Soft under-cloud city light scatter (subtle diffuse glow on cloud bottom)
         float3 cityUnderGlow = nightSample.rgb * 0.35 * cloudAlpha;
@@ -101,8 +105,8 @@ fragment {
         float stormHeight = smoothstep(0.4, 0.9, cloudAlpha) * materialParams.cloudRelief;
         float cloudDiffuse = max(sunDot + stormHeight * 0.20, 0.0);
 
-        // Daylight clouds: crisp white with relief shading
-        float3 cloudDayColor = float3(0.96, 0.98, 1.0) * (cloudDiffuse * 0.90 + 0.10) * (1.0 + stormHeight * 0.28);
+        // Daylight clouds: crisp white with realistic ambient and relief shading
+        float3 cloudDayColor = mix(float3(0.68, 0.77, 0.88), float3(0.98, 0.99, 1.0), clamp(cloudDiffuse * 1.1, 0.0, 1.0)) * (1.0 + stormHeight * 0.25);
 
         // Sunset / Twilight clouds: illuminated by long-path reddened sunlight
         float3 cloudSunsetColor = sunsetColor * (1.25 + stormHeight * 0.35);
@@ -112,7 +116,6 @@ fragment {
         float3 cloudLitColor = mix(cloudDayColor, cloudSunsetColor, cloudSunsetMix * 0.92);
 
         // Night side clouds (in Earth's shadow):
-        // Darkened by Earth shadow, but remaining softly visible by starlight / airglow + city underglow
         float3 cloudNightColor = float3(0.038, 0.052, 0.076) * 1.4 + cityUnderGlow;
 
         // Final cloud color blended smoothly across terminator into night
@@ -127,7 +130,7 @@ fragment {
         // Rim angle (1.0 at planetary limb / horizon, 0.0 at center disk)
         float rim = 1.0 - NdotV;
 
-        // A. Primary Atmospheric Limb Halo (the iconic "thin blue line" of Earth)
+        // A. Primary Atmospheric Limb Halo
         float limbIntensity = pow(rim, 2.7) * 2.1;
 
         // Daytime electric blue Rayleigh scattering
@@ -144,11 +147,11 @@ fragment {
 
         float3 atmosphereGlow = activeLimbColor * limbIntensity * (0.16 + 0.84 * max(sunDot + 0.22, 0.0));
 
-        // B. Forward Atmospheric Haze over the sunlit hemisphere
-        float forwardHaze = pow(rim, 1.5) * max(sunDot, 0.0) * 0.24;
-        float3 hazeColor = float3(0.28, 0.62, 1.0) * forwardHaze;
+        // B. Forward Atmospheric Haze over the sunlit hemisphere (soft aerial perspective)
+        float forwardHaze = pow(rim, 2.2) * max(sunDot, 0.0) * 0.16;
+        float3 hazeColor = float3(0.18, 0.52, 0.92) * forwardHaze;
 
-        // C. Twilight Terminator Arc (glow on the surface and low atmosphere along the day/night boundary)
+        // C. Twilight Terminator Arc (glow along the day/night boundary)
         float terminatorGlow = pow(sunsetBand, 1.2) * pow(1.0 - abs(NdotV - 0.5), 1.5) * 0.40;
         float3 terminatorAtmosphere = sunsetColor * terminatorGlow;
 
@@ -158,7 +161,7 @@ fragment {
         // =========================================================
         // 5. INVERTED HIGH-CONTRAST BORDERS & COUNTRY LABELS
         // =========================================================
-        if (materialParams.showBorders > 0.01 && borderSample.a > 0.005) {
+        if (materialParams.showBorders > 0.01 && borderSample.a > 0.01) {
             // Luminance of the underlying pixel (surface, clouds, city lights, atmosphere)
             float bgLum = dot(finalColor, float3(0.299, 0.587, 0.114));
 
@@ -166,15 +169,15 @@ fragment {
             float3 invertedColor = float3(1.0) - finalColor;
 
             // Guaranteed high-contrast target (pure dark charcoal on bright surfaces, luminous bright on dark)
-            float3 highContrast = (bgLum > 0.38) 
-                ? float3(0.04, 0.06, 0.08) 
-                : float3(0.96, 0.98, 1.00);
+            float3 highContrast = (bgLum > 0.42) 
+                ? float3(0.08, 0.10, 0.14) 
+                : float3(0.92, 0.96, 1.00);
 
             // Blend inverted with high-contrast target for maximum legibility and style
-            float3 borderCol = mix(invertedColor, highContrast, 0.70);
+            float3 borderCol = mix(invertedColor, highContrast, 0.75);
 
-            // Border alpha with smooth antialiasing
-            float borderAlpha = clamp(borderSample.a * 1.6, 0.0, 1.0) * materialParams.showBorders;
+            // Clean anti-aliased border alpha blending
+            float borderAlpha = borderSample.a * materialParams.showBorders;
             finalColor = mix(finalColor, borderCol, borderAlpha);
         }
 

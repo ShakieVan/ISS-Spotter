@@ -25,7 +25,7 @@ class LiveCloudDownloader(private val context: Context) {
     private val _cloudUpdateFlow = MutableSharedFlow<File>(replay = 1)
     val cloudUpdateFlow: SharedFlow<File> = _cloudUpdateFlow
 
-    private val cloudCacheFile = File(context.cacheDir, "live_clouds.png")
+    private val cloudCacheFile = File(context.cacheDir, "live_clouds.jpg")
 
     init {
         scope.launch {
@@ -41,8 +41,8 @@ class LiveCloudDownloader(private val context: Context) {
 
     suspend fun fetchLiveClouds() = withContext(Dispatchers.IO) {
         try {
-            // High quality 2048x1024 satellite composite
-            val url = "https://clouds.matteason.co.uk/images/2048x1024/clouds-alpha.png"
+            // High quality 2048x1024 satellite composite (grayscale cloud density)
+            val url = "https://clouds.matteason.co.uk/images/2048x1024/clouds.jpg"
             val request = Request.Builder()
                 .url(url)
                 .build()
@@ -51,7 +51,7 @@ class LiveCloudDownloader(private val context: Context) {
                 if (response.isSuccessful) {
                     val bytes = response.body?.bytes()
                     if (bytes != null && bytes.isNotEmpty()) {
-                        val tempFile = File(context.cacheDir, "live_clouds_tmp.png")
+                        val tempFile = File(context.cacheDir, "live_clouds_tmp.jpg")
                         FileOutputStream(tempFile).use { it.write(bytes) }
 
                         // Verify it's a valid bitmap before replacing

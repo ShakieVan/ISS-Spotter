@@ -1,0 +1,19 @@
+material {
+    name : ConstellationLabels,
+    shadingModel : unlit,
+    culling : none,
+    blending : transparent,
+    depthWrite : false,
+    requires : [ uv0 ],
+    parameters : [
+        { type : sampler2d, name : labelAtlas }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        float4 c = texture(materialParams_labelAtlas, getUV0());
+        material.baseColor = c;
+    }
+}

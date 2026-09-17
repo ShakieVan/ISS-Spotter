@@ -43,6 +43,11 @@ class IssFilamentView @JvmOverloads constructor(
     private var earthMaterial: Material? = null
     private var earthMaterialInstance: MaterialInstance? = null
 
+    // Atmosphere Shell
+    private var atmosphereMesh: EarthMesh? = null
+    private var atmosphereMaterial: Material? = null
+    private var atmosphereInstance: MaterialInstance? = null
+
     // Milky Way & Celestial Sky
     private var milkyWayMesh: EarthMesh? = null
     private var milkyWayMaterial: Material? = null
@@ -54,6 +59,10 @@ class IssFilamentView @JvmOverloads constructor(
     private var starfieldMaterial: Material? = null
     private var constellationLinesMesh: EarthMesh? = null
     private var constellationLinesMaterial: Material? = null
+    private var constellationLabelsMesh: EarthMesh? = null
+    private var constellationLabelsMaterial: Material? = null
+    private var constellationLabelsInstance: MaterialInstance? = null
+    private var constellationLabelsTexture: Texture? = null
     private var skybox: Skybox? = null
 
     // Sun Visual Billboard & Light
@@ -196,7 +205,7 @@ class IssFilamentView @JvmOverloads constructor(
 
             RenderableManager.Builder(1)
                 .boundingBox(Box(0f, 0f, 0f, 75f, 75f, 75f))
-                .geometry(0, RenderableManager.PrimitiveType.LINES, lineMesh.vertexBuffer, lineMesh.indexBuffer)
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, lineMesh.vertexBuffer, lineMesh.indexBuffer)
                 .material(0, lineInstance)
                 .castShadows(false)
                 .receiveShadows(false)
@@ -205,7 +214,39 @@ class IssFilamentView @JvmOverloads constructor(
                 .build(engine, lineMesh.entity)
             scene.addEntity(lineMesh.entity)
 
-            // 4. Sun Visual Billboard Material & Mesh
+            // 4. Constellation Labels Material, Mesh & Texture
+            val labelBytes = context.assets.open("materials/labels.filamat").use { it.readBytes() }
+            val labelBuffer = ByteBuffer.allocateDirect(labelBytes.size).apply { put(labelBytes); flip() }
+            val labelMat = Material.Builder().payload(labelBuffer, labelBuffer.remaining()).build(engine)
+            constellationLabelsMaterial = labelMat
+            val labelInstance = labelMat.createInstance()
+            constellationLabelsInstance = labelInstance
+
+            val labelTex = loadTextureFromAsset("textures/constellation_labels.png", isSrgb = true, generateMips = true)
+            constellationLabelsTexture = labelTex
+
+            val labelSampler = TextureSampler(
+                TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
+                TextureSampler.MagFilter.LINEAR,
+                TextureSampler.WrapMode.CLAMP_TO_EDGE
+            )
+            labelTex?.let { labelInstance.setParameter("labelAtlas", it, labelSampler) }
+
+            val labelMesh = StarfieldSphereBuilder.buildConstellationLabels(engine, radius = 67.5f)
+            constellationLabelsMesh = labelMesh
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 75f, 75f, 75f))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, labelMesh.vertexBuffer, labelMesh.indexBuffer)
+                .material(0, labelInstance)
+                .castShadows(false)
+                .receiveShadows(false)
+                .culling(false)
+                .priority(3)
+                .build(engine, labelMesh.entity)
+            scene.addEntity(labelMesh.entity)
+
+            // 5. Sun Visual Billboard Material & Mesh
             val sunBytes = context.assets.open("materials/sun.filamat").use { it.readBytes() }
             val sunBuffer = ByteBuffer.allocateDirect(sunBytes.size).apply { put(sunBytes); flip() }
             val sunMat = Material.Builder().payload(sunBuffer, sunBuffer.remaining()).build(engine)
@@ -215,7 +256,7 @@ class IssFilamentView @JvmOverloads constructor(
             }
             sunBillboardInstance = sunInstance
 
-            val sunMesh = CelestialSphereBuilder.buildSunBillboard(engine, halfSize = 5.5f)
+            val sunMesh = CelestialSphereBuilder.buildSunBillboard(engine, halfSize = 13.0f)
             sunBillboardMesh = sunMesh
 
             // Enable Transform on Sun Entity
@@ -228,11 +269,11 @@ class IssFilamentView @JvmOverloads constructor(
                 .castShadows(false)
                 .receiveShadows(false)
                 .culling(false)
-                .priority(3)
+                .priority(4)
                 .build(engine, sunMesh.entity)
             scene.addEntity(sunMesh.entity)
 
-            Log.i("IssFilamentView", "Initialized Milky Way sky, 3D Stars, Constellations, and Sun billboard")
+            Log.i("IssFilamentView", "Initialized Milky Way sky, 3D Stars, Constellation Lines & Labels, and Sun billboard")
         } catch (e: Exception) {
             Log.e("IssFilamentView", "Error initializing Celestial Environment: ${e.message}", e)
         }
@@ -280,10 +321,37 @@ class IssFilamentView @JvmOverloads constructor(
                 .material(0, instance)
                 .castShadows(false)
                 .receiveShadows(false)
-                .priority(4)
+                .priority(5)
                 .build(engine, mesh.entity)
 
             scene.addEntity(mesh.entity)
+
+            // --- Physical Atmospheric Limb Depth Shell ---
+            val atmoBytes = context.assets.open("materials/atmosphere.filamat").use { it.readBytes() }
+            val atmoBuffer = ByteBuffer.allocateDirect(atmoBytes.size).apply { put(atmoBytes); flip() }
+            val atmoMat = Material.Builder().payload(atmoBuffer, atmoBuffer.remaining()).build(engine)
+            atmosphereMaterial = atmoMat
+
+            val atmoInstance = atmoMat.createInstance().apply {
+                setParameter("sunDirection", 1.0f, 0.0f, 0.0f)
+            }
+            atmosphereInstance = atmoInstance
+
+            val atmoMesh = AtmosphereBuilder.buildAtmosphereShell(engine, radius = 10.22f)
+            atmosphereMesh = atmoMesh
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 12f, 12f, 12f))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, atmoMesh.vertexBuffer, atmoMesh.indexBuffer)
+                .material(0, atmoInstance)
+                .castShadows(false)
+                .receiveShadows(false)
+                .culling(false)
+                .priority(6)
+                .build(engine, atmoMesh.entity)
+
+            scene.addEntity(atmoMesh.entity)
+            Log.i("IssFilamentView", "Initialized Earth and Atmosphere Depth Shell")
         } catch (e: Exception) {
             Log.e("IssFilamentView", "Error initializing Earth: ${e.message}", e)
         }
@@ -363,12 +431,13 @@ class IssFilamentView @JvmOverloads constructor(
         val snapshot = currentSnapshot ?: return
         val elapsedSec = (frameTimeNanos - startTimeNanos) / 1_000_000_000.0f
 
-        // 1. Update Earth Material params (Sun, Time)
+        // 1. Update Earth & Atmosphere Material params (Sun, Time)
         val sun = snapshot.sun
         earthMaterialInstance?.apply {
             setParameter("sunDirection", sun.vectorX, sun.vectorY, sun.vectorZ)
             setParameter("time", elapsedSec)
         }
+        atmosphereInstance?.setParameter("sunDirection", sun.vectorX, sun.vectorY, sun.vectorZ)
 
         // 2. Update Sun Directional Light & Shadow Intensity
         val sunlight = snapshot.sunlightFactor
@@ -609,6 +678,9 @@ class IssFilamentView @JvmOverloads constructor(
         cloudTexture?.let { engine.destroyTexture(it) }
         borderTexture?.let { engine.destroyTexture(it) }
 
+        atmosphereMesh?.destroy(engine)
+        atmosphereMaterial?.let { engine.destroyMaterial(it) }
+
         milkyWayMesh?.destroy(engine)
         milkyWayMaterial?.let { engine.destroyMaterial(it) }
         milkyWayTexture?.let { engine.destroyTexture(it) }
@@ -620,6 +692,9 @@ class IssFilamentView @JvmOverloads constructor(
         starfieldMaterial?.let { engine.destroyMaterial(it) }
         constellationLinesMesh?.destroy(engine)
         constellationLinesMaterial?.let { engine.destroyMaterial(it) }
+        constellationLabelsMesh?.destroy(engine)
+        constellationLabelsMaterial?.let { engine.destroyMaterial(it) }
+        constellationLabelsTexture?.let { engine.destroyTexture(it) }
         skybox?.let { engine.destroySkybox(it) }
 
         issAsset?.let { assetLoader?.destroyAsset(it) }

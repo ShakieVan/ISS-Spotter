@@ -170,6 +170,21 @@ object CelestialCatalog {
                 "Pollux" to "Alhena"
             ),
             labelStar = "Pollux"
+        ),
+        Constellation(
+            name = "Stier",
+            lines = listOf(
+                "Aldebaran" to "Elnath"
+            ),
+            labelStar = "Aldebaran"
+        ),
+        Constellation(
+            name = "Adler",
+            lines = listOf(
+                "Atair" to "Tarazed",
+                "Atair" to "Alshain"
+            ),
+            labelStar = "Atair"
         )
     )
 }

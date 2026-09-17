@@ -1,0 +1,79 @@
+material {
+    name : AtmosphereShell,
+    shadingModel : unlit,
+    blending : add,
+    culling : back,
+    depthWrite : false,
+    requires : [ uv0 ],
+    parameters : [
+        { type : float3, name : sunDirection }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+
+        float3 P = getWorldPosition();
+        float3 W = getWorldViewVector();
+        float3 C = P + W; // Camera position in world space
+        float3 V = -normalize(W); // Ray direction from camera
+        float3 sunDir = normalize(materialParams.sunDirection);
+
+        float RE = 10.0;
+        float RA = 10.22;
+
+        // Closest approach of the view ray to Earth center (0,0,0)
+        float tClosest = -dot(C, V);
+        if (tClosest <= 0.0) {
+            material.baseColor = float4(0.0);
+            return;
+        }
+
+        float3 Pclosest = C + V * tClosest;
+        float d2 = dot(Pclosest, Pclosest);
+        float d = sqrt(d2);
+
+        if (d >= RA) {
+            material.baseColor = float4(0.0);
+            return;
+        }
+
+        float scatter = 0.0;
+        float3 N_atmo;
+
+        if (d >= RE) {
+            // Ray passes above the solid Earth through the atmospheric limb into space!
+            float h = (d - RE) / (RA - RE); // 0.0 at surface, 1.0 at outer atmosphere
+            float pathLength = 2.0 * sqrt(max(RA * RA - d2, 0.0));
+            // Exponential Rayleigh density profile
+            scatter = exp(-h * 4.2) * (1.0 - smoothstep(0.75, 1.0, h)) * pathLength * 0.45;
+            N_atmo = normalize(Pclosest);
+        } else {
+            // Ray hits the Earth surface: subtle atmospheric haze in front of Earth near the edges
+            float hSurface = d / RE; // 0 at center, 1 at horizon
+            scatter = pow(hSurface, 6.0) * 0.25;
+            N_atmo = normalize(Pclosest);
+        }
+
+        float sunDot = dot(N_atmo, sunDir);
+
+        // Sunset / Twilight spectrum (layered orange/crimson -> amber -> cyan blue as in real orbital photos)
+        float sunsetBand = smoothstep(-0.18, 0.02, sunDot) * (1.0 - smoothstep(0.02, 0.22, sunDot));
+        float sunsetGrad = clamp((sunDot + 0.16) / 0.24, 0.0, 1.0);
+        float3 sunsetColor = mix(float3(0.96, 0.22, 0.06), float3(1.00, 0.65, 0.18), sunsetGrad);
+
+        // Electric blue Rayleigh scattering on day side
+        float3 rayleighBlue = float3(0.18, 0.58, 1.00);
+
+        // Night side airglow
+        float3 nightAirglow = float3(0.015, 0.045, 0.080) * 0.35;
+
+        // Blended limb color across day/sunset/night
+        float3 litColor = mix(rayleighBlue, sunsetColor, sunsetBand * 0.92);
+        float3 finalLimbColor = mix(nightAirglow, litColor, smoothstep(-0.20, 0.08, sunDot));
+
+        float3 finalGlow = finalLimbColor * scatter * 2.2;
+        material.baseColor = float4(finalGlow, 1.0);
+    }
+}
