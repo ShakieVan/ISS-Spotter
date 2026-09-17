@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/space_dark">
+
+    <!-- 1. ISS ORBIT VIEW CONTAINER -->
+    <FrameLayout
+        android:id="@+id/issViewContainer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="visible"
+        app:layout_constraintBottom_toTopOf="@id/bottomNavContainer"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <de.shakie.iss.graphics.IssFilamentView
+            android:id="@+id/filamentView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Floating Controls in ISS Orbit View -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|bottom"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:orientation="vertical">
+
+            <Button
+                android:id="@+id/btnToggleBorders"
+                android:layout_width="wrap_content"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_hud_button"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="🌐 Grenzen"
+                android:textAllCaps="false"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- 2. OBSERVER GROUND / AR VIEW CONTAINER -->
+    <FrameLayout
+        android:id="@+id/observerViewContainer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomNavContainer"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- CameraX Live Preview -->
+        <androidx.camera.view.PreviewView
+            android:id="@+id/cameraPreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- AR Callout, Starry Sky and Starfleet Arrow Overlay -->
+        <de.shakie.iss.observer.IssCalloutOverlayView
+            android:id="@+id/calloutOverlayView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Floating Control in Observer View -->
+        <Button
+            android:id="@+id/btnToggleSkyMode"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:layout_gravity="end|bottom"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_hud_button"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="✦ Himmel / AR"
+            android:textAllCaps="false"
+            android:textColor="@color/cyan_accent"
+            android:textSize="12sp" />
+    </FrameLayout>
+
+    <!-- 3. TOP TELEMETRY HUD CARD -->
+    <LinearLayout
+        android:id="@+id/telemetryCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="14dp"
+        android:layout_marginTop="28dp"
+        android:layout_marginEnd="14dp"
+        android:background="@drawable/bg_telemetry_card"
+        android:orientation="vertical"
+        android:padding="12dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-black"
+                android:letterSpacing="0.08"
+                android:text="ISS TELEMETRIE"
+                android:textColor="@color/white"
+                android:textSize="14sp" />
+
+            <!-- Sunlight / Eclipse Status Badge -->
+            <TextView
+                android:id="@+id/tvSunlightStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#3300B894"
+                android:paddingStart="8dp"
+                android:paddingTop="3dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="3dp"
+                android:text="● IM SONNENLICHT"
+                android:textColor="@color/green_sunlight"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvOrbitCoordinates"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:fontFamily="monospace"
+            android:text="LAT: 48.24° N  LON: 11.58° E  ALT: 418.5 km"
+            android:textColor="@color/cyan_accent"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvObserverRelative"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:fontFamily="monospace"
+            android:text="SPEED: 27,600 km/h  DISTANZ: 680 km  AZ/EL: 142° / +38°"
+            android:textColor="@color/hud_text_dim"
+            android:textSize="11sp" />
+
+        <!-- Next Pass Row (Requested feature 6) -->
+        <TextView
+            android:id="@+id/tvNextPass"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:text="NÄCHSTER ÜBERFLUG: Berechnung läuft..."
+            android:textColor="@color/gold_accent"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- 4. BOTTOM NAVIGATION / VIEW SWITCHER BAR -->
+    <LinearLayout
+        android:id="@+id/bottomNavContainer"
+        android:layout_width="0dp"
+        android:layout_height="64dp"
+        android:background="#F0050A14"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <Button
+            android:id="@+id/btnModeIss"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_hud_button"
+            android:fontFamily="sans-serif-medium"
+            android:text="🛰️ Ansicht von der ISS"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btnModeObserver"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_hud_button"
+            android:fontFamily="sans-serif-medium"
+            android:text="🔭 Ansicht vom Betrachter"
+            android:textAllCaps="false"
+            android:textColor="@color/cyan_accent"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

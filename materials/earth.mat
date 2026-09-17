@@ -1,0 +1,95 @@
+﻿material {
+    name : EarthAtmosphere,
+    shadingModel : unlit,
+    blending : opaque,
+    requires : [ uv0 ],
+    parameters : [
+        { type : sampler2d, name : dayMap },
+        { type : sampler2d, name : nightMap },
+        { type : sampler2d, name : cloudMap },
+        { type : sampler2d, name : borderMap },
+        { type : float3, name : sunDirection },
+        { type : float, name : time },
+        { type : float, name : cloudRelief },
+        { type : float, name : showBorders }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+
+        float2 uv = getUV0();
+        float3 pos = getWorldPosition();
+        float3 normal = normalize(pos);
+        float3 eyeDir = -normalize(getWorldViewVector());
+        float3 sunDir = normalize(materialParams.sunDirection);
+
+        float NdotV = clamp(dot(normal, eyeDir), 0.0, 1.0);
+        float sunDot = dot(normal, sunDir);
+
+        // Day vs Night factor
+        float dayFactor = smoothstep(-0.08, 0.08, sunDot);
+        float nightFactor = 1.0 - dayFactor;
+
+        // Texture samples
+        float4 daySample = texture(materialParams_dayMap, uv);
+        float4 nightSample = texture(materialParams_nightMap, uv);
+        float4 borderSample = texture(materialParams_borderMap, uv);
+        float4 cloudSample = texture(materialParams_cloudMap, uv);
+
+        float cloudAlpha = clamp(cloudSample.a * 1.15, 0.0, 1.0);
+
+        // Cloud shadow on Earth surface
+        float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
+        float shadowCloud = texture(materialParams_cloudMap, shadowUv).a;
+        float shadowFactor = 1.0 - smoothstep(0.1, 0.8, shadowCloud) * 0.65 * dayFactor;
+
+        // Specular sun glint on ocean
+        float oceanMask = clamp((daySample.b - max(daySample.r, daySample.g) * 0.9) * 4.0, 0.0, 1.0);
+        float3 reflected = reflect(-eyeDir, normal);
+        float specAngle = max(dot(reflected, sunDir), 0.0);
+        float sunGlint = pow(specAngle, 40.0) * oceanMask * dayFactor * (1.0 - cloudAlpha);
+
+        // Surface: Day surface with shadow & glint vs Night city lights
+        float3 earthDay = daySample.rgb * shadowFactor + float3(1.0, 0.95, 0.8) * sunGlint * 1.5;
+        float3 earthNight = nightSample.rgb * 2.2;
+        float3 surfaceColor = mix(earthNight, earthDay, dayFactor);
+
+        // Optional borders & labels
+        if (materialParams.showBorders > 0.01) {
+            surfaceColor = mix(surfaceColor, borderSample.rgb, borderSample.a * 0.65 * materialParams.showBorders);
+        }
+
+        // 3D Clouds
+        float stormHeight = smoothstep(0.4, 0.9, cloudAlpha) * materialParams.cloudRelief;
+        float cloudSun = max(sunDot + stormHeight * 0.15, 0.05);
+        float3 cloudDayColor = float3(0.96, 0.98, 1.0) * cloudSun * (1.0 + stormHeight * 0.25);
+        float3 cloudNightColor = nightSample.rgb * 0.70 + float3(0.012, 0.022, 0.038);
+
+        // Subtle night lightning flashes
+        float2 stormUv = uv * 360.0;
+        float2 cellId = floor(stormUv);
+        float2 cellUv = fract(stormUv) - 0.5;
+        float cellDist = length(cellUv);
+        float flashTime = floor(materialParams.time * 6.0);
+        float stormRand = fract(sin(dot(cellId, float2(12.9898, 78.233)) + flashTime * 0.37) * 43758.5453);
+        float flashPulse = step(0.995, stormRand) * smoothstep(0.45, 0.0, cellDist);
+        float lightning = flashPulse * nightFactor * smoothstep(0.45, 0.85, cloudAlpha) * 2.8;
+        cloudNightColor += float3(0.85, 0.92, 1.0) * lightning;
+
+        float3 cloudColor = mix(cloudNightColor, cloudDayColor, dayFactor);
+        surfaceColor = mix(surfaceColor, cloudColor, cloudAlpha);
+
+        // Atmospheric Rayleigh Scattering at horizon
+        float rim = 1.0 - NdotV;
+        float rimAtmosphere = pow(rim, 5.5) * max(sunDot + 0.35, 0.06) * 1.8;
+        float3 atmosphereGlow = float3(0.25, 0.60, 1.0) * rimAtmosphere;
+
+        // Subtle daylight forward haze
+        float forwardHaze = pow(rim, 2.8) * max(sunDot, 0.0) * 0.28;
+        float3 hazeColor = float3(0.35, 0.70, 1.0) * forwardHaze;
+
+        material.baseColor = float4(surfaceColor + atmosphereGlow + hazeColor, 1.0);
+    }
+}

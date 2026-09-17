@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="space_dark">#FF070B14</color>
+    <color name="space_card">#D90A1428</color>
+    <color name="cyan_accent">#FF00E5FF</color>
+    <color name="cyan_dim">#8000E5FF</color>
+    <color name="gold_accent">#FFFFD700</color>
+    <color name="amber_warning">#FFE17055</color>
+    <color name="green_sunlight">#FF00B894</color>
+    <color name="red_eclipse">#FFD63031</color>
+    <color name="hud_text_dim">#FFA4B0BE</color>
+    <color name="icon_background">#FF070B14</color>
+</resources>

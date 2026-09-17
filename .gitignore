@@ -1,0 +1,22 @@
+.tools/
+.gradle/
+**/build/
+local.properties
+*.jks
+*.keystore
+
+# Local visual reference from the original app; not application assets.
+references/*.jpg
+references/*.png
+Videos/
+.idea/
+.kotlin/
+captures/
+.codex-remote-attachments/
+__pycache__/
+*.pyc
+*.log
+*.hprof
+.env
+.env.*
+!gradle/wrapper/gradle-wrapper.jar

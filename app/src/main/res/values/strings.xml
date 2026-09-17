@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">ISS Spotter</string>
+    <string name="view_iss">ISS Orbit-Ansicht</string>
+    <string name="view_observer">Betrachter-Ansicht</string>
+    <string name="status_sunlight">Im Sonnenlicht</string>
+    <string name="status_eclipse">Im Erdschatten</string>
+    <string name="reset_camera">Ausrichtung zurücksetzen</string>
+    <string name="toggle_borders">Grenzen ein/aus</string>
+    <string name="toggle_sky">Kamera / Himmelskuppel</string>
+</resources>
