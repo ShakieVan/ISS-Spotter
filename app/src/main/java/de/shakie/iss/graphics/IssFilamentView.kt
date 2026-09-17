@@ -43,6 +43,13 @@ class IssFilamentView @JvmOverloads constructor(
     private var earthMaterial: Material? = null
     private var earthMaterialInstance: MaterialInstance? = null
 
+    // Starfield & Constellations
+    private var starfieldMesh: EarthMesh? = null
+    private var starfieldMaterial: Material? = null
+    private var constellationLinesMesh: EarthMesh? = null
+    private var constellationLinesMaterial: Material? = null
+    private var skybox: Skybox? = null
+
     // Textures
     private var dayTexture: Texture? = null
     private var nightTexture: Texture? = null
@@ -88,10 +95,23 @@ class IssFilamentView @JvmOverloads constructor(
         options.strength = 0.25f
         view.bloomOptions = options
 
+        // Ensure clear options and skybox are active to prevent trailing/smearing
+        val clearOptions = Renderer.ClearOptions()
+        clearOptions.clear = true
+        clearOptions.clearColor = doubleArrayOf(0.002, 0.003, 0.006, 1.0)
+        renderer.clearOptions = clearOptions
+
+        val sky = Skybox.Builder()
+            .color(0.002f, 0.003f, 0.006f, 1.0f)
+            .build(engine)
+        skybox = sky
+        scene.skybox = sky
+
         uiHelper.renderCallback = this
         uiHelper.attachTo(this)
 
         initLighting()
+        initStarfield()
         initEarth()
         initIssModel()
     }
@@ -104,6 +124,54 @@ class IssFilamentView @JvmOverloads constructor(
             .castShadows(true)
             .build(engine, sunEntity)
         scene.addEntity(sunEntity)
+    }
+
+    private fun initStarfield() {
+        try {
+            // 1. Stars Material & Mesh
+            val starBytes = context.assets.open("materials/stars.filamat").use { it.readBytes() }
+            val starBuffer = ByteBuffer.allocateDirect(starBytes.size).apply { put(starBytes); flip() }
+            val starMat = Material.Builder().payload(starBuffer, starBuffer.remaining()).build(engine)
+            starfieldMaterial = starMat
+            val starInstance = starMat.createInstance()
+
+            val starMesh = StarfieldSphereBuilder.buildStarBillboards(engine, radius = 70.0f)
+            starfieldMesh = starMesh
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 75f, 75f, 75f))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, starMesh.vertexBuffer, starMesh.indexBuffer)
+                .material(0, starInstance)
+                .castShadows(false)
+                .receiveShadows(false)
+                .priority(0)
+                .build(engine, starMesh.entity)
+            scene.addEntity(starMesh.entity)
+
+            // 2. Constellation Lines Material & Mesh
+            val lineBytes = context.assets.open("materials/lines.filamat").use { it.readBytes() }
+            val lineBuffer = ByteBuffer.allocateDirect(lineBytes.size).apply { put(lineBytes); flip() }
+            val lineMat = Material.Builder().payload(lineBuffer, lineBuffer.remaining()).build(engine)
+            constellationLinesMaterial = lineMat
+            val lineInstance = lineMat.createInstance()
+
+            val lineMesh = StarfieldSphereBuilder.buildConstellationLines(engine, radius = 69.8f)
+            constellationLinesMesh = lineMesh
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 75f, 75f, 75f))
+                .geometry(0, RenderableManager.PrimitiveType.LINES, lineMesh.vertexBuffer, lineMesh.indexBuffer)
+                .material(0, lineInstance)
+                .castShadows(false)
+                .receiveShadows(false)
+                .priority(1)
+                .build(engine, lineMesh.entity)
+            scene.addEntity(lineMesh.entity)
+
+            Log.i("IssFilamentView", "Initialized 3D Starfield billboards & constellation lines")
+        } catch (e: Exception) {
+            Log.e("IssFilamentView", "Error initializing Starfield: ${e.message}", e)
+        }
     }
 
     private fun initEarth() {
@@ -290,7 +358,7 @@ class IssFilamentView @JvmOverloads constructor(
         // 5. Update Camera Look-At
         val camPose = cameraController.computeCameraPose(issPos, obsPos)
         val aspect = viewWidth.toFloat() / viewHeight.coerceAtLeast(1).toFloat()
-        camera.setProjection(42.0, aspect.toDouble(), 0.05, 50.0, Camera.Fov.VERTICAL)
+        camera.setProjection(42.0, aspect.toDouble(), 0.1, 150.0, Camera.Fov.VERTICAL)
         camera.lookAt(
             camPose[0].toDouble(), camPose[1].toDouble(), camPose[2].toDouble(),
             camPose[3].toDouble(), camPose[4].toDouble(), camPose[5].toDouble(),
@@ -411,6 +479,12 @@ class IssFilamentView @JvmOverloads constructor(
         nightTexture?.let { engine.destroyTexture(it) }
         cloudTexture?.let { engine.destroyTexture(it) }
         borderTexture?.let { engine.destroyTexture(it) }
+
+        starfieldMesh?.destroy(engine)
+        starfieldMaterial?.let { engine.destroyMaterial(it) }
+        constellationLinesMesh?.destroy(engine)
+        constellationLinesMaterial?.let { engine.destroyMaterial(it) }
+        skybox?.let { engine.destroySkybox(it) }
 
         issAsset?.let { assetLoader?.destroyAsset(it) }
         assetLoader?.destroy()

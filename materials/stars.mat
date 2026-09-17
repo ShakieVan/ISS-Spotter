@@ -1,0 +1,23 @@
+material {
+    name : Starfield,
+    shadingModel : unlit,
+    culling : none,
+    blending : transparent,
+    depthWrite : false,
+    requires : [ uv0, color ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        float2 uv = getUV0() - float2(0.5);
+        float dist = length(uv) * 2.0;
+        if (dist >= 1.0) {
+            discard;
+        }
+        float falloff = exp(-dist * dist * 5.0);
+        float4 col = getColor();
+        material.baseColor.rgb = col.rgb * (falloff * col.a);
+        material.baseColor.a = falloff * col.a;
+    }
+}
