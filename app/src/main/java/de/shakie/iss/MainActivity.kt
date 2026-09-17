@@ -52,8 +52,27 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val sysBars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            val density = resources.displayMetrics.density
+            binding.telemetryCard.layoutParams = (binding.telemetryCard.layoutParams as android.view.ViewGroup.MarginLayoutParams).apply {
+                topMargin = sysBars.top + (8 * density).toInt()
+            }
+            binding.bottomNavContainer.setPadding(
+                (16 * density).toInt(),
+                (10 * density).toInt(),
+                (16 * density).toInt(),
+                sysBars.bottom + (10 * density).toInt()
+            )
+            insets
+        }
 
         issTracker = IssTracker(this)
         cloudDownloader = LiveCloudDownloader(this)

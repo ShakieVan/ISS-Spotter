@@ -67,17 +67,6 @@ fragment {
         float3 cloudDayColor = float3(0.96, 0.98, 1.0) * cloudSun * (1.0 + stormHeight * 0.25);
         float3 cloudNightColor = nightSample.rgb * 0.70 + float3(0.012, 0.022, 0.038);
 
-        // Subtle night lightning flashes
-        float2 stormUv = uv * 360.0;
-        float2 cellId = floor(stormUv);
-        float2 cellUv = fract(stormUv) - 0.5;
-        float cellDist = length(cellUv);
-        float flashTime = floor(materialParams.time * 6.0);
-        float stormRand = fract(sin(dot(cellId, float2(12.9898, 78.233)) + flashTime * 0.37) * 43758.5453);
-        float flashPulse = step(0.995, stormRand) * smoothstep(0.45, 0.0, cellDist);
-        float lightning = flashPulse * nightFactor * smoothstep(0.45, 0.85, cloudAlpha) * 2.8;
-        cloudNightColor += float3(0.85, 0.92, 1.0) * lightning;
-
         float3 cloudColor = mix(cloudNightColor, cloudDayColor, dayFactor);
         surfaceColor = mix(surfaceColor, cloudColor, cloudAlpha);
 
