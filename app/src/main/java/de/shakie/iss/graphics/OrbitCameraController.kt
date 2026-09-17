@@ -52,17 +52,18 @@ class OrbitCameraController {
             upIss[0] * northTangent[1] - upIss[1] * northTangent[0]
         )
 
-        // 2. Base Forward & Up (astronaut view looking down towards Earth, tilted slightly forward)
-        val defaultTiltRad = Math.toRadians(12.0).toFloat()
+        // 2. Base Forward & Up (astronaut view looking forward-down towards Earth and horizon)
+        val defaultTiltRad = Math.toRadians(42.0).toFloat()
+        val flightTangent = floatArrayOf(-northTangent[0], -northTangent[1], -northTangent[2])
         val baseForward = floatArrayOf(
-            nadir[0] * cos(defaultTiltRad) + northTangent[0] * sin(defaultTiltRad),
-            nadir[1] * cos(defaultTiltRad) + northTangent[1] * sin(defaultTiltRad),
-            nadir[2] * cos(defaultTiltRad) + northTangent[2] * sin(defaultTiltRad)
+            nadir[0] * cos(defaultTiltRad) + flightTangent[0] * sin(defaultTiltRad),
+            nadir[1] * cos(defaultTiltRad) + flightTangent[1] * sin(defaultTiltRad),
+            nadir[2] * cos(defaultTiltRad) + flightTangent[2] * sin(defaultTiltRad)
         )
         val baseUp = floatArrayOf(
-            northTangent[0] * cos(defaultTiltRad) - nadir[0] * sin(defaultTiltRad),
-            northTangent[1] * cos(defaultTiltRad) - nadir[1] * sin(defaultTiltRad),
-            northTangent[2] * cos(defaultTiltRad) - nadir[2] * sin(defaultTiltRad)
+            flightTangent[0] * cos(defaultTiltRad) - nadir[0] * sin(defaultTiltRad),
+            flightTangent[1] * cos(defaultTiltRad) - nadir[1] * sin(defaultTiltRad),
+            flightTangent[2] * cos(defaultTiltRad) - nadir[2] * sin(defaultTiltRad)
         )
         val baseRight = eastTangent
 

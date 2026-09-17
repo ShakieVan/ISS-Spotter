@@ -10,8 +10,8 @@ android {
         applicationId = "de.shakie.iss"
         minSdk = 28
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.0.9"
+        versionCode = 11
+        versionName = "1.0.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -51,7 +51,7 @@ android {
 }
 
 base {
-    archivesName.set("ISS-Spotter-v1.0.9")
+    archivesName.set("ISS-Spotter-v1.0.10")
 }
 
 dependencies {

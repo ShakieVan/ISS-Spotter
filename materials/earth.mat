@@ -92,7 +92,9 @@ fragment {
 
         // Day surface with sunset tint & glint vs Night city lights
         float3 surfaceDay = daySample.rgb * shadowFactor * directSunColor + glintColor;
-        float3 surfaceNight = nightLights;
+        // Night terrain ambient starlight/airglow: continents and oceans remain softly discernible from orbit
+        float3 nightAmbient = daySample.rgb * 0.085 * float3(0.55, 0.70, 0.95);
+        float3 surfaceNight = nightLights + nightAmbient;
         float3 surfaceColor = mix(surfaceNight, surfaceDay, dayFactor);
 
         // =========================================================

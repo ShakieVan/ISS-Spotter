@@ -130,6 +130,8 @@ class IssFilamentView @JvmOverloads constructor(
         initIssModel()
     }
 
+    private var indirectLight: IndirectLight? = null
+
     private fun initLighting() {
         LightManager.Builder(LightManager.Type.DIRECTIONAL)
             .color(1.0f, 0.98f, 0.95f)
@@ -138,6 +140,17 @@ class IssFilamentView @JvmOverloads constructor(
             .castShadows(true)
             .build(engine, sunEntity)
         scene.addEntity(sunEntity)
+
+        try {
+            val ibl = IndirectLight.Builder()
+                .irradiance(1, floatArrayOf(0.75f, 0.88f, 1.05f))
+                .intensity(35_000.0f)
+                .build(engine)
+            indirectLight = ibl
+            scene.indirectLight = ibl
+        } catch (e: Exception) {
+            Log.w("IssFilamentView", "Failed to init IndirectLight: ${e.message}")
+        }
     }
 
     private fun initStarfield() {
@@ -447,8 +460,21 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     override fun doFrame(frameTimeNanos: Long) {
-        if (!isRendering || isPaused || swapChain == null) return
+        if (!isRendering || isPaused || swapChain == null) {
+            Log.d("IssFilamentView", "doFrame skipped: isRendering=$isRendering, isPaused=$isPaused, swapChain=$swapChain")
+            return
+        }
         Choreographer.getInstance().postFrameCallback(this)
+
+        if (viewWidth <= 1 || viewHeight <= 1) {
+            val w = width
+            val h = height
+            if (w > 1 && h > 1) {
+                viewWidth = w
+                viewHeight = h
+                view.viewport = Viewport(0, 0, w, h)
+            }
+        }
 
         val snapshot = currentSnapshot ?: return
         val elapsedSec = (frameTimeNanos - startTimeNanos) / 1_000_000_000.0f
@@ -522,6 +548,7 @@ class IssFilamentView @JvmOverloads constructor(
             camPose[3].toDouble(), camPose[4].toDouble(), camPose[5].toDouble(),
             camPose[6].toDouble(), camPose[7].toDouble(), camPose[8].toDouble()
         )
+        onCameraPoseUpdated?.invoke(camPose, aspect, 42.0f, cameraController.zoomFactor, showBorders > 0.5f)
 
         // 6. Update Sun Visual Billboard Position & Camera-Facing Orientation
         val sunDist = 74.0f
@@ -581,6 +608,7 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     var onCameraModified: ((Boolean) -> Unit)? = null
+    var onCameraPoseUpdated: ((camPose: FloatArray, aspect: Float, fovY: Float, zoom: Float, bordersVisible: Boolean) -> Unit)? = null
 
     private val scaleDetector = android.view.ScaleGestureDetector(context, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
@@ -653,6 +681,15 @@ class IssFilamentView @JvmOverloads constructor(
         engine.flushAndWait()
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && h > 0) {
+            viewWidth = w
+            viewHeight = h
+            view.viewport = Viewport(0, 0, w, h)
+        }
+    }
+
     override fun onResized(width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
         viewWidth = width
@@ -678,14 +715,17 @@ class IssFilamentView @JvmOverloads constructor(
                 .sampler(Texture.Sampler.SAMPLER_2D)
                 .format(if (isSrgb) Texture.InternalFormat.SRGB8_A8 else Texture.InternalFormat.RGBA8)
                 .build(engine)
+            Log.i("IssFilamentView", "Texture.Builder built texture for $path: ${bitmap.width}x${bitmap.height}, levels=$numLevels")
             TextureHelper.setBitmap(engine, texture, 0, bitmap)
+            Log.i("IssFilamentView", "TextureHelper.setBitmap finished for $path")
             bitmap.recycle()
             if (generateMips && numLevels > 1) {
                 texture.generateMipmaps(engine)
+                Log.i("IssFilamentView", "generateMipmaps finished for $path")
             }
             texture
-        } catch (e: Exception) {
-            Log.e("IssFilamentView", "Failed to load texture $path: ${e.message}", e)
+        } catch (e: Throwable) {
+            Log.e("IssFilamentView", "CRITICAL ERROR loading texture $path: ${e.message}", e)
             null
         }
     }
@@ -720,6 +760,7 @@ class IssFilamentView @JvmOverloads constructor(
         constellationLabelsMaterial?.let { engine.destroyMaterial(it) }
         constellationLabelsTexture?.let { engine.destroyTexture(it) }
         skybox?.let { engine.destroySkybox(it) }
+        indirectLight?.let { engine.destroyIndirectLight(it) }
 
         issAsset?.let { assetLoader?.destroyAsset(it) }
         assetLoader?.destroy()

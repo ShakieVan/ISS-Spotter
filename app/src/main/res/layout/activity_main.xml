@@ -22,6 +22,11 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
+        <de.shakie.iss.graphics.IssGlobeOverlayView
+            android:id="@+id/globeOverlayView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
         <!-- Floating Controls in ISS Orbit View -->
         <LinearLayout
             android:layout_width="wrap_content"
@@ -179,6 +184,16 @@
             android:text="LAT: 48.24° N  LON: 11.58° E  ALT: 418.5 km"
             android:textColor="@color/cyan_accent"
             android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvOverflight"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:fontFamily="monospace"
+            android:text="ÜBERFLIEGT: Berechnung..."
+            android:textColor="@color/cyan_accent"
+            android:textSize="11sp" />
 
         <TextView
             android:id="@+id/tvObserverRelative"

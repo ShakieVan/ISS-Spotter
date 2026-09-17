@@ -109,7 +109,15 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         binding.btnToggleBorders.setOnClickListener {
             bordersVisible = !bordersVisible
             binding.filamentView.setBorderVisibility(bordersVisible)
+            binding.globeOverlayView.setLabelsVisible(bordersVisible)
             binding.btnToggleBorders.text = if (bordersVisible) "🌐 Grenzen: AN" else "🌐 Grenzen: AUS"
+        }
+
+        // Live camera pose sync to 2D vector country labels overlay
+        binding.filamentView.onCameraPoseUpdated = { camPose, aspect, fovY, zoom, bordersVis ->
+            runOnUiThread {
+                binding.globeOverlayView.updateCamera(camPose, aspect, fovY, zoom, bordersVis)
+            }
         }
 
         // Camera look-around interaction & reset
@@ -316,7 +324,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     }
 
     private fun updateTelemetryUI(snapshot: IssSnapshot) {
-        // Coordinates
+        // Coordinates & Overflight Location
         val latDir = if (snapshot.latitude >= 0) "N" else "S"
         val lonDir = if (snapshot.longitude >= 0) "O" else "W"
         binding.tvOrbitCoordinates.text = String.format(
@@ -325,6 +333,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             kotlin.math.abs(snapshot.longitude), lonDir,
             snapshot.altitudeKm
         )
+
+        val overflightLoc = de.shakie.iss.graphics.CountryCatalog.findOverflightLocation(snapshot.latitude, snapshot.longitude)
+        binding.tvOverflight.text = "ÜBERFLIEGT: $overflightLoc"
 
         // Sunlight / Eclipse Status
         if (snapshot.isEclipsed) {
