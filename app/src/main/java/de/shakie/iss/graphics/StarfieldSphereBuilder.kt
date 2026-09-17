@@ -20,7 +20,7 @@ object StarfieldSphereBuilder {
     ): EarthMesh {
         val stars = mutableListOf<StarVertexData>()
 
-        // 1. Landmark stars from CelestialCatalog
+        // 1. Landmark stars from CelestialCatalog (pinpoint accents at constellation vertices)
         for (star in CelestialCatalog.stars) {
             val raRad = Math.toRadians(star.raHours * 15.0).toFloat()
             val decRad = Math.toRadians(star.decDeg).toFloat()
@@ -30,7 +30,7 @@ object StarfieldSphereBuilder {
             val nz = cos(decRad) * sin(raRad)
 
             val magClamped = star.magnitude.coerceIn(-1.5, 3.5).toFloat()
-            val size = (0.52f - magClamped * 0.07f).coerceIn(0.30f, 0.72f)
+            val size = (0.12f - magClamped * 0.02f).coerceIn(0.06f, 0.14f)
 
             val (r, g, b) = when (star.name) {
                 "Beteigeuze", "Aldebaran", "Antares" -> Triple(1.0f, 0.65f, 0.40f)
@@ -38,36 +38,7 @@ object StarfieldSphereBuilder {
                 "Capella", "Arktur" -> Triple(1.0f, 0.90f, 0.60f)
                 else -> Triple(0.95f, 0.97f, 1.0f)
             }
-            val alpha = (2.5f - magClamped * 0.35f).coerceIn(1.4f, 3.0f)
-            stars.add(StarVertexData(nx, ny, nz, size, r, g, b, alpha))
-        }
-
-        // 2. Realistic background stars (dense along the celestial sphere)
-        val random = java.util.Random(4242L)
-        for (i in 0 until 3200) {
-            // Uniform point on sphere via Marsaglia method
-            var x: Float
-            var y: Float
-            var s: Float
-            do {
-                x = random.nextFloat() * 2.0f - 1.0f
-                y = random.nextFloat() * 2.0f - 1.0f
-                s = x * x + y * y
-            } while (s >= 1.0f || s < 0.0001f)
-
-            val sqrtOneMinusS = sqrt(1.0f - s)
-            val nx = 2.0f * x * sqrtOneMinusS
-            val ny = 2.0f * y * sqrtOneMinusS
-            val nz = 1.0f - 2.0f * s
-
-            val size = 0.12f + random.nextFloat() * 0.20f
-            val tint = random.nextFloat()
-            val (r, g, b) = when {
-                tint > 0.80f -> Triple(0.80f, 0.90f, 1.0f)
-                tint < 0.15f -> Triple(1.0f, 0.90f, 0.70f)
-                else -> Triple(1.0f, 1.0f, 1.0f)
-            }
-            val alpha = 0.80f + random.nextFloat() * 1.10f
+            val alpha = (1.2f - magClamped * 0.15f).coerceIn(0.5f, 1.0f)
             stars.add(StarVertexData(nx, ny, nz, size, r, g, b, alpha))
         }
 

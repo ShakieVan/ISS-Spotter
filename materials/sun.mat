@@ -1,0 +1,59 @@
+material {
+    name : SunFlare,
+    shadingModel : unlit,
+    blending : transparent,
+    culling : none,
+    depthWrite : false,
+    requires : [ uv0 ],
+    parameters : [
+        { type : float, name : intensity }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+
+        float2 coord = getUV0() * 2.0 - 1.0;
+        float r = length(coord);
+        if (r > 1.0) {
+            material.baseColor = float4(0.0);
+            return;
+        }
+
+        float intens = max(materialParams.intensity, 0.1);
+
+        // 1. Solar Core Disk (blinding pure white, triggers HDR Bloom)
+        float coreDisk = smoothstep(0.13, 0.10, r);
+        float3 coreColor = float3(16.0, 15.2, 14.0) * coreDisk;
+
+        // 2. Photosphere Edge & Chromosphere
+        float photosphere = smoothstep(0.18, 0.11, r) * (1.0 - coreDisk);
+        float3 photoColor = float3(5.0, 3.2, 1.2) * photosphere;
+
+        // 3. Inner Corona (radiant golden glow)
+        float innerCorona = pow(clamp(1.0 - r * 2.0, 0.0, 1.0), 3.0) * 3.0;
+        float3 innerColor = float3(3.2, 2.2, 1.1) * innerCorona;
+
+        // 4. Outer Corona (soft expansive glow)
+        float outerCorona = pow(clamp(1.0 - r, 0.0, 1.0), 4.2) * 1.5;
+        float3 outerColor = float3(1.2, 0.7, 0.3) * outerCorona;
+
+        // 5. Optical Diffraction Spikes (4-point starburst + 4-point diagonal)
+        float angle = atan(coord.y, coord.x);
+        float ray4 = pow(abs(cos(angle * 2.0)), 36.0) * pow(clamp(1.0 - r, 0.0, 1.0), 1.8) * 1.8;
+        float rayDiag = pow(abs(cos(angle * 2.0 + 0.785398)), 54.0) * pow(clamp(1.0 - r * 1.3, 0.0, 1.0), 2.2) * 0.9;
+        float3 rayColor = float3(1.8, 1.5, 1.1) * (ray4 + rayDiag);
+
+        // 6. Chromatic Lens Ring Halo
+        float haloDist = abs(r - 0.44);
+        float halo = smoothstep(0.06, 0.0, haloDist) * 0.38;
+        float3 haloColor = float3(1.0, 0.55, 0.25) * halo;
+
+        // Total Color & Alpha
+        float3 totalRgb = (coreColor + photoColor + innerColor + outerColor + rayColor + haloColor) * intens;
+        float totalAlpha = clamp(coreDisk + innerCorona + outerCorona + (ray4 + rayDiag) * 0.7 + halo, 0.0, 1.0);
+
+        material.baseColor = float4(totalRgb, totalAlpha);
+    }
+}

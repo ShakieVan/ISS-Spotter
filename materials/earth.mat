@@ -20,9 +20,14 @@ fragment {
         prepareMaterial(material);
 
         float2 uv = getUV0();
-        float3 pos = getWorldPosition();
-        float3 normal = normalize(pos);
-        float3 eyeDir = -normalize(getWorldViewVector());
+        // Spherical surface normal calculated analytically from equirectangular UV:
+        // u=0 is -180 deg, u=0.5 is Prime Meridian (0 deg, +X), u=1 is +180 deg
+        // v=0 is South Pole (-Y), v=1 is North Pole (+Y)
+        float phi = (uv.x - 0.5) * 6.28318530718;
+        float theta = (1.0 - uv.y) * 3.14159265359;
+        float sinTheta = sin(theta);
+        float3 normal = float3(sinTheta * cos(phi), cos(theta), sinTheta * sin(phi));
+        float3 eyeDir = normalize(getWorldViewVector());
         float3 sunDir = normalize(materialParams.sunDirection);
 
         float NdotV = clamp(dot(normal, eyeDir), 0.0, 1.0);
@@ -57,11 +62,14 @@ fragment {
         float4 borderSample = texture(materialParams_borderMap, uv);
         float4 cloudSample = texture(materialParams_cloudMap, uv);
 
-        float cloudAlpha = clamp(cloudSample.a * 1.15, 0.0, 1.0);
+        // Dual-mode cloud density: Supports both RGBA live clouds and RGB offline JPEG assets
+        float cloudDensity = (cloudSample.a < 0.99) ? cloudSample.a : cloudSample.r;
+        float cloudAlpha = clamp(cloudDensity * 1.15, 0.0, 1.0);
 
         // Cloud shadow on Earth surface (only in daylight)
         float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
-        float shadowCloud = texture(materialParams_cloudMap, shadowUv).a;
+        float4 shadowSample = texture(materialParams_cloudMap, shadowUv);
+        float shadowCloud = (shadowSample.a < 0.99) ? shadowSample.a : shadowSample.r;
         float shadowFactor = 1.0 - smoothstep(0.1, 0.8, shadowCloud) * 0.65 * dayFactor;
 
         // Specular sun glint on ocean (with golden sunset tinting near terminator)

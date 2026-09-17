@@ -43,12 +43,24 @@ class IssFilamentView @JvmOverloads constructor(
     private var earthMaterial: Material? = null
     private var earthMaterialInstance: MaterialInstance? = null
 
+    // Milky Way & Celestial Sky
+    private var milkyWayMesh: EarthMesh? = null
+    private var milkyWayMaterial: Material? = null
+    private var milkyWayMaterialInstance: MaterialInstance? = null
+    private var milkyWayTexture: Texture? = null
+
     // Starfield & Constellations
     private var starfieldMesh: EarthMesh? = null
     private var starfieldMaterial: Material? = null
     private var constellationLinesMesh: EarthMesh? = null
     private var constellationLinesMaterial: Material? = null
     private var skybox: Skybox? = null
+
+    // Sun Visual Billboard & Light
+    private var sunBillboardMesh: EarthMesh? = null
+    private var sunBillboardMaterial: Material? = null
+    private var sunBillboardInstance: MaterialInstance? = null
+    private var sunEntity: Int = EntityManager.get().create()
 
     // Textures
     private var dayTexture: Texture? = null
@@ -61,9 +73,6 @@ class IssFilamentView @JvmOverloads constructor(
     private var assetLoader: AssetLoader? = null
     private var resourceLoader: ResourceLoader? = null
     private var issAsset: FilamentAsset? = null
-
-    // Sun Light
-    private var sunEntity: Int = EntityManager.get().create()
 
     // Camera controller
     val cameraController = OrbitCameraController()
@@ -101,12 +110,6 @@ class IssFilamentView @JvmOverloads constructor(
         clearOptions.clearColor = doubleArrayOf(0.002, 0.003, 0.006, 1.0)
         renderer.clearOptions = clearOptions
 
-        val sky = Skybox.Builder()
-            .color(0.002f, 0.003f, 0.006f, 1.0f)
-            .build(engine)
-        skybox = sky
-        scene.skybox = sky
-
         uiHelper.renderCallback = this
         uiHelper.attachTo(this)
 
@@ -128,14 +131,46 @@ class IssFilamentView @JvmOverloads constructor(
 
     private fun initStarfield() {
         try {
-            // 1. Stars Material & Mesh
+            // 1. Milky Way Deep Space Celestial Sphere
+            val milkyBytes = context.assets.open("materials/milkyway.filamat").use { it.readBytes() }
+            val milkyBuffer = ByteBuffer.allocateDirect(milkyBytes.size).apply { put(milkyBytes); flip() }
+            val milkyMat = Material.Builder().payload(milkyBuffer, milkyBuffer.remaining()).build(engine)
+            milkyWayMaterial = milkyMat
+            val milkyInstance = milkyMat.createInstance().apply {
+                setParameter("exposure", 1.25f)
+            }
+            milkyWayMaterialInstance = milkyInstance
+
+            milkyWayTexture = loadTextureFromAsset("textures/milky_way.jpg", isSrgb = true, generateMips = false)
+            val milkySampler = TextureSampler(
+                TextureSampler.MinFilter.LINEAR,
+                TextureSampler.MagFilter.LINEAR,
+                TextureSampler.WrapMode.REPEAT
+            )
+            milkyWayTexture?.let { milkyInstance.setParameter("skyMap", it, milkySampler) }
+
+            val milkyMesh = CelestialSphereBuilder.buildMilkyWaySphere(engine, radius = 85.0f, latSegments = 64, lonSegments = 128)
+            milkyWayMesh = milkyMesh
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 130f, 130f, 130f))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, milkyMesh.vertexBuffer, milkyMesh.indexBuffer)
+                .material(0, milkyInstance)
+                .castShadows(false)
+                .receiveShadows(false)
+                .culling(false)
+                .priority(0)
+                .build(engine, milkyMesh.entity)
+            scene.addEntity(milkyMesh.entity)
+
+            // 2. Stars Material & Mesh (Billboards)
             val starBytes = context.assets.open("materials/stars.filamat").use { it.readBytes() }
             val starBuffer = ByteBuffer.allocateDirect(starBytes.size).apply { put(starBytes); flip() }
             val starMat = Material.Builder().payload(starBuffer, starBuffer.remaining()).build(engine)
             starfieldMaterial = starMat
             val starInstance = starMat.createInstance()
 
-            val starMesh = StarfieldSphereBuilder.buildStarBillboards(engine, radius = 70.0f)
+            val starMesh = StarfieldSphereBuilder.buildStarBillboards(engine, radius = 68.0f)
             starfieldMesh = starMesh
 
             RenderableManager.Builder(1)
@@ -144,18 +179,19 @@ class IssFilamentView @JvmOverloads constructor(
                 .material(0, starInstance)
                 .castShadows(false)
                 .receiveShadows(false)
-                .priority(0)
+                .culling(false)
+                .priority(1)
                 .build(engine, starMesh.entity)
             scene.addEntity(starMesh.entity)
 
-            // 2. Constellation Lines Material & Mesh
+            // 3. Constellation Lines Material & Mesh
             val lineBytes = context.assets.open("materials/lines.filamat").use { it.readBytes() }
             val lineBuffer = ByteBuffer.allocateDirect(lineBytes.size).apply { put(lineBytes); flip() }
             val lineMat = Material.Builder().payload(lineBuffer, lineBuffer.remaining()).build(engine)
             constellationLinesMaterial = lineMat
             val lineInstance = lineMat.createInstance()
 
-            val lineMesh = StarfieldSphereBuilder.buildConstellationLines(engine, radius = 69.8f)
+            val lineMesh = StarfieldSphereBuilder.buildConstellationLines(engine, radius = 67.8f)
             constellationLinesMesh = lineMesh
 
             RenderableManager.Builder(1)
@@ -164,19 +200,47 @@ class IssFilamentView @JvmOverloads constructor(
                 .material(0, lineInstance)
                 .castShadows(false)
                 .receiveShadows(false)
-                .priority(1)
+                .culling(false)
+                .priority(2)
                 .build(engine, lineMesh.entity)
             scene.addEntity(lineMesh.entity)
 
-            Log.i("IssFilamentView", "Initialized 3D Starfield billboards & constellation lines")
+            // 4. Sun Visual Billboard Material & Mesh
+            val sunBytes = context.assets.open("materials/sun.filamat").use { it.readBytes() }
+            val sunBuffer = ByteBuffer.allocateDirect(sunBytes.size).apply { put(sunBytes); flip() }
+            val sunMat = Material.Builder().payload(sunBuffer, sunBuffer.remaining()).build(engine)
+            sunBillboardMaterial = sunMat
+            val sunInstance = sunMat.createInstance().apply {
+                setParameter("intensity", 1.0f)
+            }
+            sunBillboardInstance = sunInstance
+
+            val sunMesh = CelestialSphereBuilder.buildSunBillboard(engine, halfSize = 5.5f)
+            sunBillboardMesh = sunMesh
+
+            // Enable Transform on Sun Entity
+            engine.transformManager.create(sunMesh.entity)
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 130f, 130f, 130f))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, sunMesh.vertexBuffer, sunMesh.indexBuffer)
+                .material(0, sunInstance)
+                .castShadows(false)
+                .receiveShadows(false)
+                .culling(false)
+                .priority(3)
+                .build(engine, sunMesh.entity)
+            scene.addEntity(sunMesh.entity)
+
+            Log.i("IssFilamentView", "Initialized Milky Way sky, 3D Stars, Constellations, and Sun billboard")
         } catch (e: Exception) {
-            Log.e("IssFilamentView", "Error initializing Starfield: ${e.message}", e)
+            Log.e("IssFilamentView", "Error initializing Celestial Environment: ${e.message}", e)
         }
     }
 
     private fun initEarth() {
         try {
-            val mesh = EarthSphereBuilder.build(engine, radius = 10.0f, latSegments = 48, lonSegments = 96)
+            val mesh = EarthSphereBuilder.build(engine, radius = 10.0f, latSegments = 96, lonSegments = 192)
             earthMesh = mesh
 
             val bytes = context.assets.open("materials/earth.filamat").use { it.readBytes() }
@@ -187,16 +251,18 @@ class IssFilamentView @JvmOverloads constructor(
             val instance = mat.createInstance()
             earthMaterialInstance = instance
 
-            dayTexture = loadTextureFromAsset("textures/earth_day.jpg", isSrgb = true)
-            nightTexture = loadTextureFromAsset("textures/earth_night.png", isSrgb = true)
-            cloudTexture = loadTextureFromAsset("textures/earth_clouds.png", isSrgb = false)
-            borderTexture = loadTextureFromAsset("textures/earth_borders.png", isSrgb = true)
+            dayTexture = loadTextureFromAsset("textures/earth_day.jpg", isSrgb = true, generateMips = true)
+            nightTexture = loadTextureFromAsset("textures/earth_night.jpg", isSrgb = true, generateMips = true)
+            cloudTexture = loadTextureFromAsset("textures/earth_clouds.jpg", isSrgb = false, generateMips = true)
+            borderTexture = loadTextureFromAsset("textures/earth_borders.png", isSrgb = true, generateMips = true)
 
             val sampler = TextureSampler(
                 TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
                 TextureSampler.MagFilter.LINEAR,
                 TextureSampler.WrapMode.REPEAT
-            )
+            ).apply {
+                anisotropy = 8.0f
+            }
 
             dayTexture?.let { instance.setParameter("dayMap", it, sampler) }
             nightTexture?.let { instance.setParameter("nightMap", it, sampler) }
@@ -214,6 +280,7 @@ class IssFilamentView @JvmOverloads constructor(
                 .material(0, instance)
                 .castShadows(false)
                 .receiveShadows(false)
+                .priority(4)
                 .build(engine, mesh.entity)
 
             scene.addEntity(mesh.entity)
@@ -365,7 +432,57 @@ class IssFilamentView @JvmOverloads constructor(
             camPose[6].toDouble(), camPose[7].toDouble(), camPose[8].toDouble()
         )
 
-        // 6. Render frame
+        // 6. Update Sun Visual Billboard Position & Camera-Facing Orientation
+        val sunDist = 74.0f
+        val sunX = sun.vectorX * sunDist
+        val sunY = sun.vectorY * sunDist
+        val sunZ = sun.vectorZ * sunDist
+
+        sunBillboardMesh?.let { mesh ->
+            val tm = engine.transformManager
+            val instance = tm.getInstance(mesh.entity)
+            if (instance != 0) {
+                // Vector from Sun towards Camera
+                val toCamX = camPose[0] - sunX
+                val toCamY = camPose[1] - sunY
+                val toCamZ = camPose[2] - sunZ
+                val toCamLen = sqrt(toCamX * toCamX + toCamY * toCamY + toCamZ * toCamZ).coerceAtLeast(0.001f)
+                val fwdX = toCamX / toCamLen
+                val fwdY = toCamY / toCamLen
+                val fwdZ = toCamZ / toCamLen
+
+                // Reference Up (switch to X if forward vector is nearly vertical along Y)
+                val (refUpX, refUpY, refUpZ) = if (abs(fwdY) < 0.95f) {
+                    Triple(0f, 1f, 0f)
+                } else {
+                    Triple(1f, 0f, 0f)
+                }
+
+                // Right = cross(refUp, fwd)
+                var rightX = refUpY * fwdZ - refUpZ * fwdY
+                var rightY = refUpZ * fwdX - refUpX * fwdZ
+                var rightZ = refUpX * fwdY - refUpY * fwdX
+                val rightLen = sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ).coerceAtLeast(0.001f)
+                rightX /= rightLen
+                rightY /= rightLen
+                rightZ /= rightLen
+
+                // True Up = cross(fwd, right)
+                val trueUpX = fwdY * rightZ - fwdZ * rightY
+                val trueUpY = fwdZ * rightX - fwdX * rightZ
+                val trueUpZ = fwdX * rightY - fwdY * rightX
+
+                val transform = floatArrayOf(
+                    rightX, rightY, rightZ, 0f,
+                    trueUpX, trueUpY, trueUpZ, 0f,
+                    fwdX, fwdY, fwdZ, 0f,
+                    sunX, sunY, sunZ, 1f
+                )
+                tm.setTransform(instance, transform)
+            }
+        }
+
+        // 7. Render frame
         if (renderer.beginFrame(swapChain!!, frameTimeNanos)) {
             renderer.render(view)
             renderer.endFrame()
@@ -403,8 +520,8 @@ class IssFilamentView @JvmOverloads constructor(
                 if (isDragging && event.pointerCount == 1) {
                     val dx = event.x - lastTouchX
                     val dy = event.y - lastTouchY
-                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg - dx * 0.28f).mod(360f)
-                    cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.28f).coerceIn(-85f, 85f)
+                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg - dx * 0.16f).mod(360f)
+                    cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.16f).coerceIn(-85f, 85f)
                     lastTouchX = event.x
                     lastTouchY = event.y
                     onCameraModified?.invoke(cameraController.isModified())
@@ -450,20 +567,32 @@ class IssFilamentView @JvmOverloads constructor(
         view.viewport = Viewport(0, 0, width, height)
     }
 
-    private fun loadTextureFromAsset(path: String, isSrgb: Boolean): Texture? {
+    private fun loadTextureFromAsset(path: String, isSrgb: Boolean, generateMips: Boolean = true): Texture? {
         return try {
             val bitmap = context.assets.open(path).use { BitmapFactory.decodeStream(it) } ?: return null
+            val maxDim = max(bitmap.width, bitmap.height)
+            val numLevels = if (generateMips) (1 + floor(log2(maxDim.toDouble()))).toInt() else 1
+            val usageFlags = if (generateMips && numLevels > 1) {
+                Texture.Usage.DEFAULT or Texture.Usage.GEN_MIPMAPPABLE
+            } else {
+                Texture.Usage.DEFAULT
+            }
             val texture = Texture.Builder()
                 .width(bitmap.width)
                 .height(bitmap.height)
-                .levels(1)
+                .levels(numLevels)
+                .usage(usageFlags)
                 .sampler(Texture.Sampler.SAMPLER_2D)
                 .format(if (isSrgb) Texture.InternalFormat.SRGB8_A8 else Texture.InternalFormat.RGBA8)
                 .build(engine)
             TextureHelper.setBitmap(engine, texture, 0, bitmap)
+            bitmap.recycle()
+            if (generateMips && numLevels > 1) {
+                texture.generateMipmaps(engine)
+            }
             texture
         } catch (e: Exception) {
-            Log.e("IssFilamentView", "Failed to load texture $path: ${e.message}")
+            Log.e("IssFilamentView", "Failed to load texture $path: ${e.message}", e)
             null
         }
     }
@@ -479,6 +608,13 @@ class IssFilamentView @JvmOverloads constructor(
         nightTexture?.let { engine.destroyTexture(it) }
         cloudTexture?.let { engine.destroyTexture(it) }
         borderTexture?.let { engine.destroyTexture(it) }
+
+        milkyWayMesh?.destroy(engine)
+        milkyWayMaterial?.let { engine.destroyMaterial(it) }
+        milkyWayTexture?.let { engine.destroyTexture(it) }
+
+        sunBillboardMesh?.destroy(engine)
+        sunBillboardMaterial?.let { engine.destroyMaterial(it) }
 
         starfieldMesh?.destroy(engine)
         starfieldMaterial?.let { engine.destroyMaterial(it) }

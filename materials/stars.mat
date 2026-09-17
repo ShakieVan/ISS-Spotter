@@ -15,7 +15,7 @@ fragment {
         if (dist >= 1.0) {
             discard;
         }
-        float falloff = exp(-dist * dist * 5.0);
+        float falloff = exp(-dist * dist * 9.0);
         float4 col = getColor();
         material.baseColor.rgb = col.rgb * (falloff * col.a);
         material.baseColor.a = falloff * col.a;

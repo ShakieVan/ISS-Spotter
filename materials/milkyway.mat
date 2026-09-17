@@ -1,0 +1,26 @@
+material {
+    name : MilkyWaySky,
+    shadingModel : unlit,
+    blending : opaque,
+    culling : none,
+    depthWrite : true,
+    requires : [ uv0 ],
+    parameters : [
+        { type : sampler2d, name : skyMap },
+        { type : float, name : exposure }
+    ]
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+
+        float2 uv = getUV0();
+        float3 sky = texture(materialParams_skyMap, uv).rgb;
+
+        // Astrophotography curve: vibrant galactic core, dust lanes, and pinpoint stars
+        sky = pow(sky, float3(0.88)) * 1.4 * materialParams.exposure;
+
+        material.baseColor = float4(sky, 1.0);
+    }
+}
