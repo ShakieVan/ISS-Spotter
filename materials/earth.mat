@@ -11,7 +11,8 @@ material {
         { type : float3, name : sunDirection },
         { type : float, name : time },
         { type : float, name : cloudRelief },
-        { type : float, name : showBorders }
+        { type : float, name : showBorders },
+        { type : float, name : showClouds }
     ]
 }
 
@@ -62,18 +63,17 @@ fragment {
         float4 borderSample = texture(materialParams_borderMap, uv);
         float4 cloudSample = texture(materialParams_cloudMap, uv);
 
-        // Natural cloud density curve: Supports RGBA live clouds and RGB offline textures.
-        // Applies a non-linear threshold so clear sky / ocean is truly 100% clear.
+        // Natural cloud density curve with toggleable showClouds parameter
         float rawCloud = (cloudSample.a < 0.99 && cloudSample.a > 0.01) ? cloudSample.a : cloudSample.r;
         float poleDist = abs(uv.y - 0.5) * 2.0;
         float poleMask = 1.0 - smoothstep(0.80, 0.96, poleDist);
-        float cloudAlpha = smoothstep(0.22, 0.82, rawCloud) * poleMask;
+        float cloudAlpha = smoothstep(0.22, 0.82, rawCloud) * poleMask * materialParams.showClouds;
 
-        // Cloud shadow on Earth surface (only in daylight)
+        // Cloud shadow on Earth surface (only in daylight, only if clouds visible)
         float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
         float4 shadowSample = texture(materialParams_cloudMap, shadowUv);
         float rawShadow = (shadowSample.a < 0.99 && shadowSample.a > 0.01) ? shadowSample.a : shadowSample.r;
-        float shadowAlpha = smoothstep(0.22, 0.82, rawShadow);
+        float shadowAlpha = smoothstep(0.22, 0.82, rawShadow) * materialParams.showClouds;
         float shadowFactor = 1.0 - shadowAlpha * 0.70 * max(sunDot, 0.0);
 
         // Specular sun glint on ocean (with golden sunset tinting near terminator)
@@ -125,13 +125,13 @@ fragment {
         surfaceColor = mix(surfaceColor, cloudColor, cloudAlpha);
 
         // =========================================================
-        // 4. ATMOSPHERE: RAYLEIGH SCATTERING & SUNSET GLOW
+        // 4. ATMOSPHERE: SUBTLE GRAZING LIMB & SUNSET GLOW
         // =========================================================
         // Rim angle (1.0 at planetary limb / horizon, 0.0 at center disk)
         float rim = 1.0 - NdotV;
 
-        // A. Primary Atmospheric Limb Halo
-        float limbIntensity = pow(rim, 2.7) * 2.1;
+        // Grazing limb: only at the extreme silhouette horizon edge (no milkiness over ground)
+        float limbIntensity = pow(rim, 7.5) * 0.55;
 
         // Daytime electric blue Rayleigh scattering
         float3 rayleighBlue = float3(0.18, 0.58, 1.0);
@@ -147,16 +147,12 @@ fragment {
 
         float3 atmosphereGlow = activeLimbColor * limbIntensity * (0.16 + 0.84 * max(sunDot + 0.22, 0.0));
 
-        // B. Forward Atmospheric Haze over the sunlit hemisphere (soft aerial perspective)
-        float forwardHaze = pow(rim, 2.2) * max(sunDot, 0.0) * 0.16;
-        float3 hazeColor = float3(0.18, 0.52, 0.92) * forwardHaze;
-
-        // C. Twilight Terminator Arc (glow along the day/night boundary)
-        float terminatorGlow = pow(sunsetBand, 1.2) * pow(1.0 - abs(NdotV - 0.5), 1.5) * 0.40;
+        // Twilight Terminator Arc (glow along the day/night boundary)
+        float terminatorGlow = pow(sunsetBand, 1.5) * 0.18;
         float3 terminatorAtmosphere = sunsetColor * terminatorGlow;
 
         // Final Composite Color (Surface + Clouds + Atmosphere)
-        float3 finalColor = surfaceColor + atmosphereGlow + hazeColor + terminatorAtmosphere;
+        float3 finalColor = surfaceColor + atmosphereGlow + terminatorAtmosphere;
 
         // =========================================================
         // 5. INVERTED HIGH-CONTRAST BORDERS & COUNTRY LABELS

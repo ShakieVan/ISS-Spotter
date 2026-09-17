@@ -35,7 +35,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     private var currentOrientation = DeviceOrientation(0f, 0f, 0f, FloatArray(16))
     private var bordersVisible = true
+    private var cloudsVisible = true
     private var isObserverMode = false
+    private var locationListener: LocationListener? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -94,6 +96,13 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
         binding.btnModeObserver.setOnClickListener {
             switchToObserverMode()
+        }
+
+        // Toggle live cloud layer
+        binding.btnToggleClouds.setOnClickListener {
+            cloudsVisible = !cloudsVisible
+            binding.filamentView.setCloudVisibility(cloudsVisible)
+            binding.btnToggleClouds.text = if (cloudsVisible) "☁️ Wolken: AN" else "☁️ Wolken: AUS"
         }
 
         // Toggle country borders & names
@@ -210,23 +219,32 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     private fun setupLocationUpdates() {
         try {
-            val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
             val lastLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
             lastLoc?.let { updateObserverLocation(it) }
 
-            val listener = object : LocationListener {
-                override fun onLocationChanged(location: Location) {
-                    updateObserverLocation(location)
+            if (locationListener == null) {
+                locationListener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        updateObserverLocation(location)
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
                 }
-                @Deprecated("Deprecated in Java")
-                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
             }
 
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 10000L, 50f, listener)
+                locationListener?.let { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 10000L, 50f, it) }
             }
+        } catch (ignored: Exception) {}
+    }
+
+    private fun stopLocationUpdates() {
+        try {
+            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+            locationListener?.let { lm.removeUpdates(it) }
         } catch (ignored: Exception) {}
     }
 
@@ -261,6 +279,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     override fun onResume() {
         super.onResume()
+        binding.filamentView.resumeRendering()
         orientationHelper.start()
         if (isObserverMode && !binding.calloutOverlayView.showVirtualSky &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -268,15 +287,18 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             startCameraPreview()
         }
         Choreographer.getInstance().postFrameCallback(this)
+        setupLocationUpdates()
     }
 
     override fun onPause() {
         super.onPause()
+        binding.filamentView.pauseRendering()
         orientationHelper.stop()
         if (isObserverMode) {
             arCameraManager?.stopCamera()
         }
         Choreographer.getInstance().removeFrameCallback(this)
+        stopLocationUpdates()
     }
 
     override fun doFrame(frameTimeNanos: Long) {
@@ -345,6 +367,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopLocationUpdates()
         issTracker.destroy()
         cloudDownloader.destroy()
         arCameraManager?.stopCamera()

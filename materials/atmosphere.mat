@@ -50,10 +50,9 @@ fragment {
             scatter = exp(-h * 4.2) * (1.0 - smoothstep(0.75, 1.0, h)) * pathLength * 0.45;
             N_atmo = normalize(Pclosest);
         } else {
-            // Ray hits the Earth surface: subtle atmospheric haze in front of Earth near the edges
-            float hSurface = d / RE; // 0 at center, 1 at horizon
-            scatter = pow(hSurface, 6.0) * 0.25;
-            N_atmo = normalize(Pclosest);
+            // Ray hits the solid Earth body: keep Earth surface 100% clear without milky haze
+            material.baseColor = float4(0.0);
+            return;
         }
 
         float sunDot = dot(N_atmo, sunDir);

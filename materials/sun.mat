@@ -23,44 +23,53 @@ fragment {
 
         float intens = max(materialParams.intensity, 0.1);
 
-        // 1. Solar Core Photosphere (blinding, intense white)
-        float coreDisk = exp(-pow(r * 14.0, 2.0));
-        float3 coreColor = float3(28.0, 27.5, 26.5) * coreDisk;
+        // 1. Solar Core Photosphere (blinding, intense white light)
+        float coreDisk = exp(-pow(r * 12.0, 2.0));
+        float3 coreColor = float3(85.0, 83.0, 80.0) * coreDisk;
 
         // 2. Solar Corona & Bloom (golden amber radiating glow)
-        float innerCorona = pow(clamp(1.0 - r * 2.2, 0.0, 1.0), 3.0) * 4.5;
-        float3 innerColor = float3(3.6, 2.8, 1.6) * innerCorona;
+        float innerCorona = pow(clamp(1.0 - r * 1.8, 0.0, 1.0), 2.5) * 8.5;
+        float3 innerColor = float3(6.5, 4.8, 2.5) * innerCorona;
 
-        float outerCorona = pow(clamp(1.0 - r, 0.0, 1.0), 4.5) * 2.2;
-        float3 outerColor = float3(1.6, 1.0, 0.45) * outerCorona;
+        float outerCorona = pow(clamp(1.0 - r * 0.85, 0.0, 1.0), 3.5) * 4.0;
+        float3 outerColor = float3(2.8, 1.6, 0.7) * outerCorona;
 
         // 3. Horizontal Anamorphic Lens Flare Streak (iconic NASA space camera flare)
-        float streakH = exp(-pow(coord.y * 36.0, 2.0)) * exp(-pow(coord.x * 1.6, 2.0));
-        float3 streakColor = float3(0.45, 0.85, 1.35) * streakH * 4.8;
+        float streakH = exp(-pow(coord.y * 45.0, 2.0)) * (1.0 - smoothstep(0.1, 0.98, abs(coord.x)));
+        float3 streakColor = float3(0.55, 0.95, 1.65) * streakH * 10.0;
 
-        // 4. Optical Diffraction Spikes (4-point cardinal cross + diagonal micro-spikes)
+        float streakWide = exp(-pow(coord.y * 14.0, 2.0)) * (1.0 - smoothstep(0.0, 0.95, abs(coord.x)));
+        float3 streakWideColor = float3(0.35, 0.65, 1.25) * streakWide * 3.5;
+
+        // 4. Optical Diffraction Spikes (8-star cardinal + diagonal spikes)
         float angle = atan(coord.y, coord.x);
-        float ray4 = pow(abs(cos(angle * 2.0)), 40.0) * pow(clamp(1.0 - r, 0.0, 1.0), 1.8) * 2.4;
-        float rayDiag = pow(abs(cos(angle * 2.0 + 0.785398)), 54.0) * pow(clamp(1.0 - r * 1.3, 0.0, 1.0), 2.2) * 1.2;
-        float3 rayColor = float3(2.2, 1.9, 1.4) * (ray4 + rayDiag);
+        float rayCardinal = pow(abs(cos(angle * 2.0)), 50.0) * pow(clamp(1.0 - r * 0.8, 0.0, 1.0), 1.2) * 5.5;
+        float ray8 = pow(abs(cos(angle * 4.0)), 32.0) * pow(clamp(1.0 - r * 0.9, 0.0, 1.0), 1.5) * 4.5;
+        float3 rayColor = float3(3.5, 3.0, 2.4) * (rayCardinal + ray8);
 
         // 5. Chromatic Aperture Rainbow Ring
-        float ringDist = abs(r - 0.42);
         float3 ringColor = float3(
-            smoothstep(0.045, 0.0, abs(r - 0.44)),
-            smoothstep(0.045, 0.0, abs(r - 0.42)),
-            smoothstep(0.045, 0.0, abs(r - 0.40))
-        ) * 1.8;
+            smoothstep(0.05, 0.0, abs(r - 0.46)),
+            smoothstep(0.05, 0.0, abs(r - 0.43)),
+            smoothstep(0.05, 0.0, abs(r - 0.40))
+        ) * 3.5;
 
-        // 6. Secondary Lens Flare Ghost Reflexes
-        float2 ghost1Coord = coord + float2(0.22, 0.12);
-        float ghost1 = exp(-dot(ghost1Coord, ghost1Coord) * 60.0) * 0.45;
-        float2 ghost2Coord = coord - float2(0.32, 0.18);
-        float ghost2 = exp(-dot(ghost2Coord, ghost2Coord) * 35.0) * 0.35;
-        float3 ghostColor = float3(0.35, 0.75, 1.20) * ghost1 + float3(1.10, 0.55, 0.20) * ghost2;
+        // 6. Secondary Lens Flare Ghost Reflexes (multi-element optics)
+        float2 g1 = coord + float2(0.25, 0.14);
+        float ghost1 = exp(-dot(g1, g1) * 70.0) * 1.2;
+        float2 g2 = coord - float2(0.35, 0.20);
+        float ghost2 = exp(-dot(g2, g2) * 40.0) * 0.85;
+        float2 g3 = coord + float2(0.55, 0.31);
+        float ghost3 = exp(-dot(g3, g3) * 25.0) * 0.65;
+        float2 g4 = coord - float2(0.68, 0.38);
+        float ghost4 = exp(-dot(g4, g4) * 18.0) * 0.50;
+        float3 ghostColor = float3(0.3, 0.8, 1.4) * ghost1 
+                         + float3(1.4, 0.6, 0.2) * ghost2 
+                         + float3(0.4, 1.1, 0.8) * ghost3 
+                         + float3(1.2, 0.3, 0.9) * ghost4;
 
         // Total additive HDR color
-        float3 totalRgb = (coreColor + innerColor + outerColor + streakColor + rayColor + ringColor + ghostColor) * intens;
+        float3 totalRgb = (coreColor + innerColor + outerColor + streakColor + streakWideColor + rayColor + ringColor + ghostColor) * intens;
 
         material.baseColor = float4(totalRgb, 1.0);
     }

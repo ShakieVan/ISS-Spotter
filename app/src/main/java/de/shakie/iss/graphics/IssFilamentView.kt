@@ -90,7 +90,9 @@ class IssFilamentView @JvmOverloads constructor(
     private var currentSnapshot: IssSnapshot? = null
     private var startTimeNanos = System.nanoTime()
     private var isRendering = false
+    private var isPaused = false
     private var showBorders = 1.0f
+    private var showClouds = 1.0f
     private var cloudRelief = 1.0f
 
     // Touch interaction
@@ -256,7 +258,7 @@ class IssFilamentView @JvmOverloads constructor(
             }
             sunBillboardInstance = sunInstance
 
-            val sunMesh = CelestialSphereBuilder.buildSunBillboard(engine, halfSize = 13.0f)
+            val sunMesh = CelestialSphereBuilder.buildSunBillboard(engine, halfSize = 24.0f)
             sunBillboardMesh = sunMesh
 
             // Enable Transform on Sun Entity
@@ -314,6 +316,7 @@ class IssFilamentView @JvmOverloads constructor(
             instance.setParameter("time", 0.0f)
             instance.setParameter("cloudRelief", cloudRelief)
             instance.setParameter("showBorders", showBorders)
+            instance.setParameter("showClouds", showClouds)
 
             RenderableManager.Builder(1)
                 .boundingBox(Box(0f, 0f, 0f, 11f, 11f, 11f))
@@ -424,8 +427,27 @@ class IssFilamentView @JvmOverloads constructor(
         earthMaterialInstance?.setParameter("showBorders", showBorders)
     }
 
+    fun setCloudVisibility(visible: Boolean) {
+        showClouds = if (visible) 1.0f else 0.0f
+        earthMaterialInstance?.setParameter("showClouds", showClouds)
+    }
+
+    fun pauseRendering() {
+        isPaused = true
+        isRendering = false
+        Choreographer.getInstance().removeFrameCallback(this)
+    }
+
+    fun resumeRendering() {
+        isPaused = false
+        if (!isRendering && swapChain != null) {
+            isRendering = true
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
     override fun doFrame(frameTimeNanos: Long) {
-        if (!isRendering || swapChain == null) return
+        if (!isRendering || isPaused || swapChain == null) return
         Choreographer.getInstance().postFrameCallback(this)
 
         val snapshot = currentSnapshot ?: return
@@ -615,8 +637,10 @@ class IssFilamentView @JvmOverloads constructor(
     override fun onNativeWindowChanged(surface: Surface) {
         swapChain?.let { engine.destroySwapChain(it) }
         swapChain = engine.createSwapChain(surface)
-        isRendering = true
-        Choreographer.getInstance().postFrameCallback(this)
+        if (!isPaused) {
+            isRendering = true
+            Choreographer.getInstance().postFrameCallback(this)
+        }
     }
 
     override fun onDetachedFromSurface() {
