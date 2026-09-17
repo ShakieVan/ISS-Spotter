@@ -75,6 +75,13 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         strokeWidth = 1.5f * density
     }
 
+    private var sunDir: FloatArray? = null
+    private var inSunlight: Boolean = true
+
+    private val flareCorePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val flareStreakPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val flareGhostPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
     fun setLabelsVisible(visible: Boolean) {
         bordersVisible = visible
         postInvalidateOnAnimation()
@@ -85,20 +92,23 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         viewportAspect: Float,
         fovY: Float,
         zoom: Float,
-        isBordersVisible: Boolean
+        isBordersVisible: Boolean,
+        sunDirection: FloatArray? = null,
+        isInSunlight: Boolean = true
     ) {
         cameraPose = camPose
         aspect = viewportAspect
         fovYDeg = fovY
         zoomFactor = zoom
         bordersVisible = isBordersVisible
+        sunDir = sunDirection
+        inSunlight = isInSunlight
         postInvalidateOnAnimation()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        if (!bordersVisible) return
         val pose = cameraPose ?: return
 
         val w = width.toFloat()
@@ -119,6 +129,11 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         Matrix.setLookAtM(viewMatrix, 0, eyeX, eyeY, eyeZ, targetX, targetY, targetZ, upX, upY, upZ)
         Matrix.perspectiveM(projMatrix, 0, fovYDeg, aspect, 0.1f, 150.0f)
         Matrix.multiplyMM(vpMatrix, 0, projMatrix, 0, viewMatrix, 0)
+
+        // 2. Optical Screen-Space Lens Flare (when Sun is in view and not eclipsed by Earth)
+        drawOpticalLensFlare(canvas, eyeX, eyeY, eyeZ, w, h)
+
+        if (!bordersVisible) return
 
         val earthRadius = 10.0f
         val majorTextSize = (13f * density).coerceIn(24f, 42f)
@@ -215,6 +230,171 @@ class IssGlobeOverlayView @JvmOverloads constructor(
             outlinePaint.strokeWidth = if (isMajor) 3.5f * density else 2.8f * density
             canvas.drawText(country.nameDe, screenX, screenY - 6f * density, outlinePaint)
             canvas.drawText(country.nameDe, screenX, screenY - 6f * density, paint)
+        }
+    }
+
+    private val flareRayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private fun drawOpticalLensFlare(
+        canvas: Canvas,
+        eyeX: Float, eyeY: Float, eyeZ: Float,
+        w: Float, h: Float
+    ) {
+        val sDir = sunDir ?: return
+        if (!inSunlight) return
+
+        // 1. Physical gradual occultation by Earth sphere
+        val sunDist = 74.0f
+        val sunWorldX = sDir[0] * sunDist
+        val sunWorldY = sDir[1] * sunDist
+        val sunWorldZ = sDir[2] * sunDist
+
+        val toSunX = sunWorldX - eyeX
+        val toSunY = sunWorldY - eyeY
+        val toSunZ = sunWorldZ - eyeZ
+        val toSunLen = sqrt(toSunX * toSunX + toSunY * toSunY + toSunZ * toSunZ).coerceAtLeast(0.001f)
+        val dirX = toSunX / toSunLen
+        val dirY = toSunY / toSunLen
+        val dirZ = toSunZ / toSunLen
+
+        val tClosest = -(eyeX * dirX + eyeY * dirY + eyeZ * dirZ)
+        val occlusionFactor = if (tClosest > 0.0f) {
+            val pCloseX = eyeX + dirX * tClosest
+            val pCloseY = eyeY + dirY * tClosest
+            val pCloseZ = eyeZ + dirZ * tClosest
+            val distCenter = sqrt(pCloseX * pCloseX + pCloseY * pCloseY + pCloseZ * pCloseZ)
+            // Solar disc apparent radius at the limb is ~0.35 units
+            // Smoothly transitions as sun dips behind Earth horizon
+            ((distCenter - 9.65f) / 0.70f).coerceIn(0.0f, 1.0f)
+        } else {
+            1.0f
+        }
+        if (occlusionFactor <= 0.005f) return
+
+        // 2. Project Sun world position to Clip Space
+        val sunClip = FloatArray(4)
+        val sunWorld4 = floatArrayOf(sunWorldX, sunWorldY, sunWorldZ, 1.0f)
+        Matrix.multiplyMV(sunClip, 0, vpMatrix, 0, sunWorld4, 0)
+        val clipW = sunClip[3]
+        if (clipW <= 0.1f) return // Sun is behind camera plane
+
+        val ndcX = sunClip[0] / clipW
+        val ndcY = sunClip[1] / clipW
+
+        val sunScreenX = (ndcX * 0.5f + 0.5f) * w
+        val sunScreenY = (1.0f - (ndcY * 0.5f + 0.5f)) * h
+
+        val centerX = w * 0.5f
+        val centerY = h * 0.5f
+
+        // Optical flare vector from Sun through viewport optical center
+        val flareDx = centerX - sunScreenX
+        val flareDy = centerY - sunScreenY
+
+        // Distance from screen center in normalized screen radius
+        val normDistX = flareDx / (w * 0.5f)
+        val normDistY = flareDy / (h * 0.5f)
+        val normDist = sqrt(normDistX * normDistX + normDistY * normDistY)
+
+        // As the sun leaves the viewport, rays and flare smoothly fade to 0
+        // (full intensity when looking directly at sun, fading towards screen border)
+        val fovFactor = ((1.35f - normDist) / 0.85f).coerceIn(0.0f, 1.0f)
+        val totalIntensity = (occlusionFactor * fovFactor).coerceIn(0.0f, 1.0f)
+        if (totalIntensity <= 0.005f) return
+
+        // Continuous 60fps animation while optical lens flare is active
+        postInvalidateOnAnimation()
+
+        val timeSec = android.os.SystemClock.uptimeMillis() / 1000.0f
+
+        // A. Blinding Solar Glare Core in screen space
+        val glareRadius = 95f * density * totalIntensity
+        flareCorePaint.shader = RadialGradient(
+            sunScreenX, sunScreenY, glareRadius,
+            intArrayOf(
+                Color.argb((245 * totalIntensity).toInt(), 255, 255, 255),
+                Color.argb((150 * totalIntensity).toInt(), 255, 225, 140),
+                Color.argb((50 * totalIntensity).toInt(), 255, 150, 60),
+                Color.TRANSPARENT
+            ),
+            floatArrayOf(0.0f, 0.22f, 0.65f, 1.0f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawCircle(sunScreenX, sunScreenY, glareRadius, flareCorePaint)
+
+        // B. Dynamic Shimmering / Dancing Rays ("tänzelnde Strahlen")
+        val baseAngle = Math.atan2(flareDy.toDouble(), flareDx.toDouble()).toFloat() + timeSec * 0.12f
+        val numSpikes = 12
+        for (i in 0 until numSpikes) {
+            val phase = timeSec * 2.8f + i * 1.618f
+            val wobble = sin(phase) * 0.045f
+            val spikeAngle = baseAngle + (i.toFloat() / numSpikes) * (Math.PI.toFloat() * 2.0f) + wobble
+            val cosA = cos(spikeAngle)
+            val sinA = sin(spikeAngle)
+
+            val lengthPulse = 0.82f + 0.22f * sin(timeSec * 3.4f + i * 2.1f)
+            val spikeLength = 175f * density * totalIntensity * lengthPulse
+
+            val endX = sunScreenX + cosA * spikeLength
+            val endY = sunScreenY + sinA * spikeLength
+
+            flareRayPaint.shader = LinearGradient(
+                sunScreenX, sunScreenY, endX, endY,
+                intArrayOf(
+                    Color.argb((220 * totalIntensity).toInt(), 255, 255, 240),
+                    Color.argb((120 * totalIntensity).toInt(), 255, 220, 140),
+                    Color.argb((40 * totalIntensity).toInt(), 140, 200, 255),
+                    Color.TRANSPARENT
+                ),
+                floatArrayOf(0.0f, 0.25f, 0.65f, 1.0f),
+                Shader.TileMode.CLAMP
+            )
+            flareRayPaint.strokeWidth = (if (i % 3 == 0) 3.5f else 2.0f) * density * totalIntensity
+            canvas.drawLine(sunScreenX, sunScreenY, endX, endY, flareRayPaint)
+        }
+
+        // C. Anamorphic Horizontal Light Streak across camera viewport
+        val streakHalfWidth = w * 0.85f * totalIntensity
+        val streakHeight = 2.8f * density * (0.88f + 0.12f * sin(timeSec * 4.0f))
+        flareStreakPaint.shader = LinearGradient(
+            sunScreenX - streakHalfWidth, sunScreenY,
+            sunScreenX + streakHalfWidth, sunScreenY,
+            intArrayOf(
+                Color.TRANSPARENT,
+                Color.argb((125 * totalIntensity).toInt(), 120, 200, 255),
+                Color.argb((250 * totalIntensity).toInt(), 255, 255, 255),
+                Color.argb((125 * totalIntensity).toInt(), 120, 200, 255),
+                Color.TRANSPARENT
+            ),
+            floatArrayOf(0.0f, 0.35f, 0.5f, 0.65f, 1.0f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(
+            sunScreenX - streakHalfWidth, sunScreenY - streakHeight,
+            sunScreenX + streakHalfWidth, sunScreenY + streakHeight,
+            flareStreakPaint
+        )
+
+        // D. Optical Lens Ghost Elements along the axis
+        val ghosts = arrayOf(
+            Triple(0.40f, 16f, Color.argb((90 * totalIntensity).toInt(), 80, 220, 255)),
+            Triple(0.65f, 32f, Color.argb((60 * totalIntensity).toInt(), 255, 180, 90)),
+            Triple(1.15f, 22f, Color.argb((70 * totalIntensity).toInt(), 220, 120, 255)),
+            Triple(1.45f, 48f, Color.argb((45 * totalIntensity).toInt(), 100, 230, 210)),
+            Triple(1.85f, 14f, Color.argb((85 * totalIntensity).toInt(), 255, 230, 110)),
+            Triple(2.20f, 65f, Color.argb((35 * totalIntensity).toInt(), 140, 180, 255))
+        )
+
+        for (g in ghosts) {
+            val gx = sunScreenX + flareDx * g.first
+            val gy = sunScreenY + flareDy * g.second
+            val gr = g.second * density
+            flareGhostPaint.color = g.third
+            flareGhostPaint.style = Paint.Style.FILL
+            canvas.drawCircle(gx, gy, gr, flareGhostPaint)
         }
     }
 }

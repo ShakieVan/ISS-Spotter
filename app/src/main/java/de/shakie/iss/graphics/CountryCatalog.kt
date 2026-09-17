@@ -1,4 +1,4 @@
-﻿package de.shakie.iss.graphics
+package de.shakie.iss.graphics
 
 data class CountryEntry(
     val nameDe: String,
@@ -19,7 +19,7 @@ object CountryCatalog {
         CountryEntry("Angola", "Angola", -11.64f, 18.09f, -18.02f, -4.43f, 11.74f, 24.05f, 2),
         CountryEntry("Anguilla", "Anguilla", 18.22f, -63.05f, 18.17f, 18.27f, -63.16f, -62.98f, 4),
         CountryEntry("Albania", "Albania", 41.10f, 20.11f, 39.65f, 42.65f, 19.28f, 21.03f, 3),
-        CountryEntry("Ã…land", "Ã…land", 60.27f, 19.95f, 60.01f, 60.41f, 19.52f, 20.61f, 4),
+        CountryEntry("Åland", "Åland", 60.27f, 19.95f, 60.01f, 60.41f, 19.52f, 20.61f, 4),
         CountryEntry("Andorra", "Andorra", 42.53f, 1.55f, 42.43f, 42.64f, 1.41f, 1.74f, 4),
         CountryEntry("Ver. Arab. Emirate", "United Arab Emirates", 24.19f, 54.48f, 22.62f, 26.07f, 51.57f, 56.39f, 3),
         CountryEntry("Argentinien", "Argentina", -36.22f, -65.39f, -55.03f, -21.80f, -73.58f, -53.67f, 1),
@@ -41,7 +41,7 @@ object CountryCatalog {
         CountryEntry("Bahrain", "Bahrain", 26.05f, 50.55f, 25.81f, 26.25f, 50.45f, 50.62f, 3),
         CountryEntry("Bahamas", "Bahamas", 24.68f, -78.07f, 20.94f, 26.94f, -78.99f, -72.75f, 3),
         CountryEntry("Bosnia and Herz.", "Bosnia and Herz.", 44.07f, 18.13f, 42.56f, 45.28f, 15.74f, 19.58f, 3),
-        CountryEntry("St-BarthÃ©lemy", "St-BarthÃ©lemy", 17.90f, -62.84f, 17.88f, 17.92f, -62.88f, -62.80f, 4),
+        CountryEntry("St-Barthélemy", "St-Barthélemy", 17.90f, -62.84f, 17.88f, 17.92f, -62.88f, -62.80f, 4),
         CountryEntry("Belarus", "Belarus", 53.53f, 28.12f, 51.27f, 56.15f, 23.18f, 32.71f, 2),
         CountryEntry("Belize", "Belize", 17.36f, -88.69f, 15.89f, 18.48f, -89.24f, -87.79f, 4),
         CountryEntry("Bermuda", "Bermuda", 32.31f, -64.77f, 32.26f, 32.39f, -64.86f, -64.67f, 4),
@@ -56,7 +56,7 @@ object CountryCatalog {
         CountryEntry("Schweiz", "Switzerland", 46.74f, 8.31f, 45.83f, 47.78f, 5.97f, 10.45f, 2),
         CountryEntry("Chile", "Chile", -40.64f, -71.93f, -55.89f, -17.51f, -109.43f, -66.44f, 1),
         CountryEntry("China", "China", 35.50f, 104.00f, 18.22f, 53.56f, 73.61f, 134.75f, 1),
-        CountryEntry("CÃ´te d'Ivoire", "CÃ´te d'Ivoire", 8.02f, -5.82f, 4.35f, 10.72f, -8.60f, -2.51f, 2),
+        CountryEntry("Côte d'Ivoire", "Côte d'Ivoire", 8.02f, -5.82f, 4.35f, 10.72f, -8.60f, -2.51f, 2),
         CountryEntry("Cameroon", "Cameroon", 6.26f, 13.01f, 1.68f, 13.08f, 8.53f, 16.18f, 2),
         CountryEntry("Dem. Rep. Congo", "Dem. Rep. Congo", -4.55f, 23.70f, -13.45f, 5.31f, 12.21f, 31.27f, 1),
         CountryEntry("Congo", "Congo", -1.15f, 14.38f, -5.00f, 3.69f, 11.13f, 18.62f, 3),

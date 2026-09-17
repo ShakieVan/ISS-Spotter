@@ -548,7 +548,8 @@ class IssFilamentView @JvmOverloads constructor(
             camPose[3].toDouble(), camPose[4].toDouble(), camPose[5].toDouble(),
             camPose[6].toDouble(), camPose[7].toDouble(), camPose[8].toDouble()
         )
-        onCameraPoseUpdated?.invoke(camPose, aspect, 42.0f, cameraController.zoomFactor, showBorders > 0.5f)
+        val sunDir = floatArrayOf(sun.vectorX, sun.vectorY, sun.vectorZ)
+        onCameraPoseUpdated?.invoke(camPose, aspect, 42.0f, cameraController.zoomFactor, showBorders > 0.5f, sunDir, snapshot.sunlightFactor > 0.05f)
 
         // 6. Update Sun Visual Billboard Position & Camera-Facing Orientation
         val sunDist = 74.0f
@@ -608,7 +609,7 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     var onCameraModified: ((Boolean) -> Unit)? = null
-    var onCameraPoseUpdated: ((camPose: FloatArray, aspect: Float, fovY: Float, zoom: Float, bordersVisible: Boolean) -> Unit)? = null
+    var onCameraPoseUpdated: ((camPose: FloatArray, aspect: Float, fovY: Float, zoom: Float, bordersVisible: Boolean, sunDir: FloatArray, inSunlight: Boolean) -> Unit)? = null
 
     private val scaleDetector = android.view.ScaleGestureDetector(context, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
@@ -639,7 +640,7 @@ class IssFilamentView @JvmOverloads constructor(
                 if (isDragging && event.pointerCount == 1) {
                     val dx = event.x - lastTouchX
                     val dy = event.y - lastTouchY
-                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg - dx * 0.16f).mod(360f)
+                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg + dx * 0.16f).mod(360f)
                     cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.16f).coerceIn(-85f, 85f)
                     lastTouchX = event.x
                     lastTouchY = event.y

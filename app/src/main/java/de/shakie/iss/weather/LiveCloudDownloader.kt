@@ -25,9 +25,19 @@ class LiveCloudDownloader(private val context: Context) {
     private val _cloudUpdateFlow = MutableSharedFlow<File>(replay = 1)
     val cloudUpdateFlow: SharedFlow<File> = _cloudUpdateFlow
 
+    private val _isLiveFlow = kotlinx.coroutines.flow.MutableStateFlow<Boolean>(false)
+    val isLiveFlow: kotlinx.coroutines.flow.StateFlow<Boolean> = _isLiveFlow
+    val isLive: Boolean get() = _isLiveFlow.value
+
     private val cloudCacheFile = File(context.cacheDir, "live_clouds.jpg")
 
     init {
+        // If cache already exists from a previous session, activate it immediately
+        if (cloudCacheFile.exists() && cloudCacheFile.length() > 10000) {
+            _isLiveFlow.value = true
+            _cloudUpdateFlow.tryEmit(cloudCacheFile)
+        }
+
         scope.launch {
             // Initial check/download
             fetchLiveClouds()
@@ -40,35 +50,42 @@ class LiveCloudDownloader(private val context: Context) {
     }
 
     suspend fun fetchLiveClouds() = withContext(Dispatchers.IO) {
-        try {
-            // High quality 2048x1024 satellite composite (grayscale cloud density)
-            val url = "https://clouds.matteason.co.uk/images/2048x1024/clouds.jpg"
-            val request = Request.Builder()
-                .url(url)
-                .build()
+        val urls = listOf(
+            "https://clouds.matteason.co.uk/images/4096x2048/clouds.jpg",
+            "https://clouds.matteason.co.uk/images/2048x1024/clouds.jpg"
+        )
+        for (url in urls) {
+            try {
+                val request = Request.Builder()
+                    .url(url)
+                    .build()
 
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val bytes = response.body?.bytes()
-                    if (bytes != null && bytes.isNotEmpty()) {
-                        val tempFile = File(context.cacheDir, "live_clouds_tmp.jpg")
-                        FileOutputStream(tempFile).use { it.write(bytes) }
+                val succeeded = client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val bytes = response.body?.bytes()
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val tempFile = File(context.cacheDir, "live_clouds_tmp.jpg")
+                            FileOutputStream(tempFile).use { it.write(bytes) }
 
-                        // Verify it's a valid bitmap before replacing
-                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeFile(tempFile.absolutePath, opts)
-                        if (opts.outWidth > 0 && opts.outHeight > 0) {
-                            tempFile.renameTo(cloudCacheFile)
-                            Log.i("LiveCloudDownloader", "Downloaded fresh satellite cloud map (${opts.outWidth}x${opts.outHeight})")
-                            _cloudUpdateFlow.emit(cloudCacheFile)
-                        } else {
-                            tempFile.delete()
-                        }
-                    }
+                            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeFile(tempFile.absolutePath, opts)
+                            if (opts.outWidth > 0 && opts.outHeight > 0) {
+                                tempFile.renameTo(cloudCacheFile)
+                                Log.i("LiveCloudDownloader", "Downloaded fresh satellite cloud map (${opts.outWidth}x${opts.outHeight}) from $url")
+                                _isLiveFlow.value = true
+                                _cloudUpdateFlow.emit(cloudCacheFile)
+                                true
+                            } else {
+                                tempFile.delete()
+                                false
+                            }
+                        } else false
+                    } else false
                 }
+                if (succeeded) break
+            } catch (e: Exception) {
+                Log.w("LiveCloudDownloader", "Cloud map download from $url skipped: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w("LiveCloudDownloader", "Cloud map download skipped: ${e.message}")
         }
     }
 

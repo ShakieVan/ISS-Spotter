@@ -132,8 +132,8 @@ fragment {
         // Rim angle (1.0 at planetary limb / horizon, 0.0 at center disk)
         float rim = 1.0 - NdotV;
 
-        // Grazing limb: only at the extreme silhouette horizon edge (no milkiness over ground)
-        float limbIntensity = pow(rim, 7.5) * 0.55;
+        // Grazing silhouette edge: only at the absolute outer edge of the planetary horizon (no milkiness over land)
+        float limbIntensity = pow(rim, 32.0) * 0.15;
 
         // Daytime electric blue Rayleigh scattering
         float3 rayleighBlue = float3(0.18, 0.58, 1.0);
@@ -150,10 +150,10 @@ fragment {
         float3 atmosphereGlow = activeLimbColor * limbIntensity * (0.16 + 0.84 * max(sunDot + 0.22, 0.0));
 
         // Twilight Terminator Arc (glow along the day/night boundary)
-        float terminatorGlow = pow(sunsetBand, 1.5) * 0.18;
+        float terminatorGlow = pow(sunsetBand, 1.5) * 0.15;
         float3 terminatorAtmosphere = sunsetColor * terminatorGlow;
 
-        // Final Composite Color (Surface + Clouds + Atmosphere)
+        // Final Composite Color: pure crystal-clear surface + clouds, with crisp horizon edge
         float3 finalColor = surfaceColor + atmosphereGlow + terminatorAtmosphere;
 
         // =========================================================

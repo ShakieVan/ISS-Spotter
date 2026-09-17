@@ -99,10 +99,11 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         }
 
         // Toggle live cloud layer
+        updateCloudButtonText()
         binding.btnToggleClouds.setOnClickListener {
             cloudsVisible = !cloudsVisible
             binding.filamentView.setCloudVisibility(cloudsVisible)
-            binding.btnToggleClouds.text = if (cloudsVisible) "☁️ Wolken: AN" else "☁️ Wolken: AUS"
+            updateCloudButtonText()
         }
 
         // Toggle country borders & names
@@ -113,10 +114,10 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             binding.btnToggleBorders.text = if (bordersVisible) "🌐 Grenzen: AN" else "🌐 Grenzen: AUS"
         }
 
-        // Live camera pose sync to 2D vector country labels overlay
-        binding.filamentView.onCameraPoseUpdated = { camPose, aspect, fovY, zoom, bordersVis ->
+        // Live camera pose sync to 2D vector country labels overlay & optical lens flare
+        binding.filamentView.onCameraPoseUpdated = { camPose, aspect, fovY, zoom, bordersVis, sunDir, inSun ->
             runOnUiThread {
-                binding.globeOverlayView.updateCamera(camPose, aspect, fovY, zoom, bordersVis)
+                binding.globeOverlayView.updateCamera(camPose, aspect, fovY, zoom, bordersVis, sunDir, inSun)
             }
         }
 
@@ -201,10 +202,25 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         }
     }
 
+    private fun updateCloudButtonText() {
+        if (!cloudsVisible) {
+            binding.btnToggleClouds.text = "☁️ Wolken: AUS"
+        } else {
+            val isLive = cloudDownloader.isLive
+            binding.btnToggleClouds.text = if (isLive) "☁️ Wolken: AN (🌐 Live)" else "☁️ Wolken: AN (💾 Archiv)"
+        }
+    }
+
     private fun setupCloudSync() {
         lifecycleScope.launch {
             cloudDownloader.cloudUpdateFlow.collectLatest { file ->
                 binding.filamentView.updateLiveClouds(file)
+                updateCloudButtonText()
+            }
+        }
+        lifecycleScope.launch {
+            cloudDownloader.isLiveFlow.collectLatest {
+                updateCloudButtonText()
             }
         }
     }
