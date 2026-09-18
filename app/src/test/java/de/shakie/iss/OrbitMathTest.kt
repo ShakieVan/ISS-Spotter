@@ -422,4 +422,80 @@ class OrbitMathTest {
 
         assertTrue("Peru must be on night side (sunDot < -0.1): $sunDot", sunDot < -0.1f)
     }
+
+    @Test
+    fun testCameraDragDirection() {
+        val lat = 0.0
+        val lon = 0.0
+        val altKm = 420.0
+        val earthRadius = 10.0f
+        val issRadius = earthRadius + earthRadius * (altKm.toFloat() / 6371.0f)
+        val issPos = floatArrayOf(issRadius, 0f, 0f)
+
+        val cam = de.shakie.iss.graphics.OrbitCameraController()
+        val defaultPose = cam.computeCameraPose(issPos, floatArrayOf(0f, 0f, 0f))
+        val eye0 = floatArrayOf(defaultPose[0], defaultPose[1], defaultPose[2])
+        val tgt0 = floatArrayOf(defaultPose[3], defaultPose[4], defaultPose[5])
+        val up0 = floatArrayOf(defaultPose[6], defaultPose[7], defaultPose[8])
+        val fwd0 = floatArrayOf(tgt0[0] - eye0[0], tgt0[1] - eye0[1], tgt0[2] - eye0[2])
+        val fLen0 = sqrt(fwd0[0]*fwd0[0] + fwd0[1]*fwd0[1] + fwd0[2]*fwd0[2])
+        val fNorm0 = floatArrayOf(fwd0[0]/fLen0, fwd0[1]/fLen0, fwd0[2]/fLen0)
+        // Camera Right = cross(fNorm0, up0)
+        val right0 = floatArrayOf(
+            fNorm0[1] * up0[2] - fNorm0[2] * up0[1],
+            fNorm0[2] * up0[0] - fNorm0[0] * up0[2],
+            fNorm0[0] * up0[1] - fNorm0[1] * up0[0]
+        )
+
+        // Point on Earth surface slightly to the East (Screen Right)
+        val targetPointOnEarth = floatArrayOf(
+            earthRadius,
+            0f,
+            -0.5f // East is -Z in Filament coordinate system
+        )
+
+        // Initial screen X coordinate of targetPointOnEarth
+        val toPt0 = floatArrayOf(targetPointOnEarth[0] - eye0[0], targetPointOnEarth[1] - eye0[1], targetPointOnEarth[2] - eye0[2])
+        val screenX0 = toPt0[0] * right0[0] + toPt0[1] * right0[1] + toPt0[2] * right0[2]
+
+        // 1. HORIZONTAL DRAG TEST: User swipes finger to the RIGHT (dx = +100 px)
+        // In direct manipulation, dragging finger to the RIGHT MUST move the scene to the RIGHT (screenX1 > screenX0)
+        val dx = 100f
+        cam.yawOffsetDeg = 0f + dx * 0.16f
+
+        val dragPose = cam.computeCameraPose(issPos, floatArrayOf(0f, 0f, 0f))
+        val eye1 = floatArrayOf(dragPose[0], dragPose[1], dragPose[2])
+        val tgt1 = floatArrayOf(dragPose[3], dragPose[4], dragPose[5])
+        val up1 = floatArrayOf(dragPose[6], dragPose[7], dragPose[8])
+        val fwd1 = floatArrayOf(tgt1[0] - eye1[0], tgt1[1] - eye1[1], tgt1[2] - eye1[2])
+        val fLen1 = sqrt(fwd1[0]*fwd1[0] + fwd1[1]*fwd1[1] + fwd1[2]*fwd1[2])
+        val fNorm1 = floatArrayOf(fwd1[0]/fLen1, fwd1[1]/fLen1, fwd1[2]/fLen1)
+        val right1 = floatArrayOf(
+            fNorm1[1] * up1[2] - fNorm1[2] * up1[1],
+            fNorm1[2] * up1[0] - fNorm1[0] * up1[2],
+            fNorm1[0] * up1[1] - fNorm1[1] * up1[0]
+        )
+
+        val toPt1 = floatArrayOf(targetPointOnEarth[0] - eye1[0], targetPointOnEarth[1] - eye1[1], targetPointOnEarth[2] - eye1[2])
+        val screenX1 = toPt1[0] * right1[0] + toPt1[1] * right1[1] + toPt1[2] * right1[2]
+
+        println("Touch Drag Right Test: screenX0=$screenX0 -> screenX1=$screenX1 (delta=${screenX1 - screenX0})")
+        assertTrue("Dragging finger RIGHT must shift scene to the RIGHT (positive delta): delta=${screenX1 - screenX0}", screenX1 > screenX0)
+
+        // 2. VERTICAL DRAG TEST: User swipes finger DOWN (dy = +100 px)
+        // Dragging finger DOWN MUST move the scene DOWN (screenY1 < screenY0 or positive screen displacement following finger)
+        cam.reset()
+        val dy = 100f
+        cam.pitchOffsetDeg = 0f + dy * 0.16f
+
+        val pitchPose = cam.computeCameraPose(issPos, floatArrayOf(0f, 0f, 0f))
+        val eyeP = floatArrayOf(pitchPose[0], pitchPose[1], pitchPose[2])
+        val upP = floatArrayOf(pitchPose[6], pitchPose[7], pitchPose[8])
+        val toPtP = floatArrayOf(targetPointOnEarth[0] - eyeP[0], targetPointOnEarth[1] - eyeP[1], targetPointOnEarth[2] - eyeP[2])
+        // In screen Y (where Up is +Y), when camera tilts up, object on screen moves DOWN (screen Y decreases)
+        val screenY0 = toPt0[0] * up0[0] + toPt0[1] * up0[1] + toPt0[2] * up0[2]
+        val screenYP = toPtP[0] * upP[0] + toPtP[1] * upP[1] + toPtP[2] * upP[2]
+        println("Touch Drag Down Test: screenY0=$screenY0 -> screenYP=$screenYP (delta=${screenYP - screenY0})")
+        assertTrue("Dragging finger DOWN must move scene DOWN on screen: delta=${screenYP - screenY0}", screenYP < screenY0)
+    }
 }
