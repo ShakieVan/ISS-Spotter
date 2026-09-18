@@ -329,6 +329,7 @@ class IssFilamentView @JvmOverloads constructor(
             val instance = mat.createInstance()
             atmosphereMaterialInstance = instance
             instance.setParameter("sunDirection", 1.0f, 0.0f, 0.0f)
+            instance.setParameter("cameraPosition", 0.0f, 0.0f, 20.0f)
 
             RenderableManager.Builder(1)
                 .boundingBox(Box(0f, 0f, 0f, 12f, 12f, 12f))
@@ -523,6 +524,7 @@ class IssFilamentView @JvmOverloads constructor(
 
         // 5. Update Camera Look-At
         val camPose = cameraController.computeCameraPose(issPos, obsPos)
+        atmosphereMaterialInstance?.setParameter("cameraPosition", camPose[0], camPose[1], camPose[2])
         val aspect = viewWidth.toFloat() / viewHeight.coerceAtLeast(1).toFloat()
         camera.setProjection(42.0, aspect.toDouble(), 0.1, 150.0, Camera.Fov.VERTICAL)
         camera.lookAt(

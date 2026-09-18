@@ -383,4 +383,43 @@ class OrbitMathTest {
         assertEquals(0f, cam.pitchOffsetDeg, 1e-4f)
         assertEquals(1.0f, cam.zoomFactor, 1e-4f)
     }
+
+    @Test
+    fun testPeruLightingAndShadow() {
+        // Timestamp from screenshot media_1789716117302.jpg (09:21 local = 07:21 UTC on 2026-09-18)
+        val timeMillis = java.time.Instant.parse("2026-09-18T07:21:00Z").toEpochMilli()
+        val sun = SolarCoordinates.calculate(timeMillis)
+
+        println("=== SUN POSITION AT 07:21 UTC ===")
+        println("Sun Lat: ${sun.latitude}, Lon: ${sun.longitude}")
+        println("Sun Vector: [${sun.vectorX}, ${sun.vectorY}, ${sun.vectorZ}]")
+
+        // Sun should be in the daytime over Asia / Indian Ocean (+60° to +110° East)
+        assertTrue("Sun should be over Eastern hemisphere in morning UTC: ${sun.longitude}", sun.longitude > 0.0)
+
+        // Peru: lat ~ -11.58, lon ~ -79.14 (Western hemisphere, ~02:21 AM local time)
+        val issLat = -11.58
+        val issLon = -79.14
+        val issAlt = 417.6
+
+        val sunlight = EclipseCalculator.getSunlightFactor(issLat, issLon, issAlt, sun)
+        println("Peru ISS Sunlight factor: $sunlight")
+        assertEquals("ISS over Peru at 02:21 AM must be in Earth shadow", 0.0f, sunlight, 1e-4f)
+
+        // Calculate surface normal for Peru using UV mapping formula
+        val uPeru = ((issLon + 180.0) / 360.0).toFloat()
+        val vPeru = ((issLat + 90.0) / 180.0).toFloat()
+
+        val theta = (1.0f - vPeru) * Math.PI.toFloat()
+        val phi = (uPeru - 0.5f) * 2.0f * Math.PI.toFloat()
+        val nx = sin(theta) * cos(phi)
+        val ny = cos(theta)
+        val nz = -sin(theta) * sin(phi)
+
+        val sunDot = nx * sun.vectorX + ny * sun.vectorY + nz * sun.vectorZ
+        println("Peru Surface Normal: [$nx, $ny, $nz]")
+        println("Peru sunDot: $sunDot")
+
+        assertTrue("Peru must be on night side (sunDot < -0.1): $sunDot", sunDot < -0.1f)
+    }
 }
