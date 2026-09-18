@@ -77,24 +77,36 @@ class IssFilamentView @JvmOverloads constructor(
     private var cloudTexture: Texture? = null
     private var borderTexture: Texture? = null
     private var satelliteTexture: Texture? = null
-    enum class CloudEncoding(val value: Float) {
-        GRAYSCALE_MASK(0.0f),
-        CLOUD_ALPHA_MASK(1.0f)
-    }
 
-    enum class CloudNoDataMode(val value: Float) {
-        NODATA_NONE(0.0f),
-        NODATA_ALPHA_ZERO(1.0f),
-        NODATA_SENTINEL_ZERO(2.0f)
-    }
-
-    var isSatelliteMode: Boolean = false
+    var requestedMapSource: MapSourcePreference = MapSourcePreference.BLUE_MARBLE
+        private set
+    var userCloudPreference: Boolean = true
+        private set
+    var satelliteDownloadState: SatelliteDownloadState = SatelliteDownloadState.NOT_STARTED
         private set
     var isReferenceMode: Boolean = false
         private set
-    var currentCloudEncoding: CloudEncoding = CloudEncoding.GRAYSCALE_MASK
+
+    val isSatelliteAvailable: Boolean
+        get() = satelliteTexture != null
+
+    val currentConfiguration: EffectiveMapConfiguration
+        get() = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = requestedMapSource,
+                hasSatelliteTexture = satelliteTexture != null,
+                downloadState = satelliteDownloadState,
+                userCloudPreference = userCloudPreference,
+                isReferenceMode = isReferenceMode
+            )
+        )
+
+    val isSatelliteMode: Boolean
+        get() = currentConfiguration.activeTextureSource == EffectiveTextureSource.SATELLITE_VIIRS
+
+    var currentCloudEncoding: de.shakie.iss.graphics.CloudEncoding = de.shakie.iss.graphics.CloudEncoding.GRAYSCALE_MASK
         private set
-    var currentCloudNoDataMode: CloudNoDataMode = CloudNoDataMode.NODATA_NONE
+    var currentCloudNoDataMode: de.shakie.iss.graphics.CloudNoDataMode = de.shakie.iss.graphics.CloudNoDataMode.NODATA_NONE
         private set
 
     // Color grading & tone mapping
@@ -116,7 +128,6 @@ class IssFilamentView @JvmOverloads constructor(
     private var isRendering = false
     private var isPaused = false
     private var showBorders = 1.0f
-    private var showClouds = 1.0f
     private var cloudRelief = 1.0f
 
     // Touch interaction
@@ -305,6 +316,10 @@ class IssFilamentView @JvmOverloads constructor(
             earthMesh = mesh
 
             val bytes = context.assets.open("materials/earth.filamat").use { it.readBytes() }
+            val sha256 = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(bytes)
+                .joinToString("") { "%02X".format(it) }
+            Log.i("IssFilamentView", "Loaded earth.filamat (${bytes.size} bytes, SHA-256: $sha256)")
             val buffer = ByteBuffer.allocateDirect(bytes.size).apply { put(bytes); flip() }
             val mat = Material.Builder().payload(buffer, buffer.remaining()).build(engine)
             earthMaterial = mat
@@ -330,12 +345,13 @@ class IssFilamentView @JvmOverloads constructor(
             cloudTexture?.let { instance.setParameter("cloudMap", it, sampler) }
             borderTexture?.let { instance.setParameter("borderMap", it, sampler) }
 
+            val config = currentConfiguration
             instance.setParameter("sunDirection", 1.0f, 0.0f, 0.0f)
             instance.setParameter("time", 0.0f)
             instance.setParameter("cloudRelief", cloudRelief)
             instance.setParameter("showBorders", showBorders)
-            instance.setParameter("showClouds", showClouds)
-            instance.setParameter("isReferenceMode", 0.0f)
+            instance.setParameter("showClouds", if (config.showClouds) 1.0f else 0.0f)
+            instance.setParameter("isReferenceMode", if (config.isReferenceMode) 1.0f else 0.0f)
             instance.setParameter("debugVisualMode", 0.0f)
             instance.setParameter("cloudEncoding", currentCloudEncoding.value)
             instance.setParameter("cloudNoDataMode", currentCloudNoDataMode.value)
@@ -487,56 +503,66 @@ class IssFilamentView @JvmOverloads constructor(
             satelliteTexture = newTexture
             oldTexture?.let { engine.destroyTexture(it) }
 
-            if (isSatelliteMode) {
-                val sampler = TextureSampler(
-                    TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
-                    TextureSampler.MagFilter.LINEAR,
-                    TextureSampler.WrapMode.REPEAT
-                ).apply { anisotropy = 8.0f }
-                earthMaterialInstance?.setParameter("dayMap", newTexture, sampler)
-            }
+            satelliteDownloadState = SatelliteDownloadState.SUCCEEDED
+            applyEffectiveState()
             Log.i("IssFilamentView", "Updated NASA GIBS satellite texture (${w}x${h})")
         } catch (e: Exception) {
+            satelliteDownloadState = SatelliteDownloadState.FAILED
+            applyEffectiveState()
             Log.w("IssFilamentView", "Failed to update satellite texture: ${e.message}")
         }
     }
 
-    fun setMapMode(useSatellite: Boolean) {
-        isSatelliteMode = useSatellite
+    fun setSatelliteDownloadState(state: SatelliteDownloadState) {
+        satelliteDownloadState = state
+        applyEffectiveState()
+    }
+
+    fun applyEffectiveState() {
+        val config = currentConfiguration
         val sampler = TextureSampler(
             TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
             TextureSampler.MagFilter.LINEAR,
             TextureSampler.WrapMode.REPEAT
         ).apply { anisotropy = 8.0f }
 
-        if (useSatellite && satelliteTexture != null) {
-            earthMaterialInstance?.setParameter("dayMap", satelliteTexture!!, sampler)
-            earthMaterialInstance?.setParameter("showClouds", 0.0f)
-            Log.i("IssFilamentView", "Switched Earth map mode to NASA GIBS VIIRS Satellit")
-        } else {
-            dayTexture?.let { earthMaterialInstance?.setParameter("dayMap", it, sampler) }
-            earthMaterialInstance?.setParameter("showClouds", showClouds)
-            Log.i("IssFilamentView", "Switched Earth map mode to NASA Blue Marble")
+        val activeTexture = when (config.activeTextureSource) {
+            EffectiveTextureSource.SATELLITE_VIIRS -> satelliteTexture ?: dayTexture
+            EffectiveTextureSource.BLUE_MARBLE -> dayTexture
         }
-    }
 
-    fun setReferenceMode(enabled: Boolean) {
-        isReferenceMode = enabled
-        earthMaterialInstance?.setParameter("isReferenceMode", if (enabled) 1.0f else 0.0f)
+        activeTexture?.let {
+            earthMaterialInstance?.setParameter("dayMap", it, sampler)
+        }
+
+        earthMaterialInstance?.setParameter("showClouds", if (config.showClouds) 1.0f else 0.0f)
+        earthMaterialInstance?.setParameter("isReferenceMode", if (config.isReferenceMode) 1.0f else 0.0f)
+
         atmosphereMesh?.let { mesh ->
-            if (enabled) {
+            if (config.isReferenceMode) {
                 scene.removeEntity(mesh.entity)
             } else {
                 scene.removeEntity(mesh.entity)
                 scene.addEntity(mesh.entity)
             }
         }
+
         val bloomOpts = view.bloomOptions
-        bloomOpts.enabled = !enabled
+        bloomOpts.enabled = !config.isReferenceMode
         view.bloomOptions = bloomOpts
 
-        view.colorGrading = if (enabled) referenceColorGrading else standardColorGrading
-        Log.i("IssFilamentView", "Switched Reference Mode: $enabled (bloom=${!enabled}, toneMapping=${if (enabled) "LINEAR" else "ACES"})")
+        view.colorGrading = if (config.isReferenceMode) referenceColorGrading else standardColorGrading
+        Log.i("IssFilamentView", "Applied effective state: source=${config.activeTextureSource}, showClouds=${config.showClouds}, ref=${config.isReferenceMode}, label='${config.statusLabel}'")
+    }
+
+    fun setMapMode(useSatellite: Boolean) {
+        requestedMapSource = if (useSatellite) MapSourcePreference.SATELLITE else MapSourcePreference.BLUE_MARBLE
+        applyEffectiveState()
+    }
+
+    fun setReferenceMode(enabled: Boolean) {
+        isReferenceMode = enabled
+        applyEffectiveState()
     }
 
     fun setSnapshot(snapshot: IssSnapshot) {
@@ -549,8 +575,8 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     fun setCloudVisibility(visible: Boolean) {
-        showClouds = if (visible) 1.0f else 0.0f
-        earthMaterialInstance?.setParameter("showClouds", showClouds)
+        userCloudPreference = visible
+        applyEffectiveState()
     }
 
     fun setDebugVisualMode(mode: Int) {

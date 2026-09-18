@@ -19,7 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import de.shakie.iss.databinding.ActivityMainBinding
-import de.shakie.iss.graphics.IssFilamentView
+import de.shakie.iss.graphics.*
 import de.shakie.iss.observer.ArCameraManager
 import de.shakie.iss.observer.DeviceOrientation
 import de.shakie.iss.observer.OrientationSensorHelper
@@ -68,8 +68,8 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 normalAnalysisEnabled = false
                 binding.filamentView.setDebugVisualMode(0)
                 binding.filamentView.setCloudDataSourceConfig(
-                    IssFilamentView.CloudEncoding.GRAYSCALE_MASK,
-                    IssFilamentView.CloudNoDataMode.NODATA_NONE
+                    CloudEncoding.GRAYSCALE_MASK,
+                    CloudNoDataMode.NODATA_NONE
                 )
                 updateGroundMarkerButtonText()
                 updateNormalAnalysisButtonText()
@@ -125,15 +125,15 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             }
             if (intent.hasExtra("cloud_encoding")) {
                 val encVal = intent.getFloatExtra("cloud_encoding", 0f)
-                val enc = if (encVal > 0.5f) IssFilamentView.CloudEncoding.CLOUD_ALPHA_MASK else IssFilamentView.CloudEncoding.GRAYSCALE_MASK
+                val enc = if (encVal > 0.5f) CloudEncoding.CLOUD_ALPHA_MASK else CloudEncoding.GRAYSCALE_MASK
                 binding.filamentView.setCloudDataSourceConfig(enc, binding.filamentView.currentCloudNoDataMode)
             }
             if (intent.hasExtra("cloud_nodata")) {
                 val ndVal = intent.getFloatExtra("cloud_nodata", 0f)
                 val nd = when {
-                    ndVal > 1.5f -> IssFilamentView.CloudNoDataMode.NODATA_SENTINEL_ZERO
-                    ndVal > 0.5f -> IssFilamentView.CloudNoDataMode.NODATA_ALPHA_ZERO
-                    else -> IssFilamentView.CloudNoDataMode.NODATA_NONE
+                    ndVal > 1.5f -> CloudNoDataMode.NODATA_SENTINEL_ZERO
+                    ndVal > 0.5f -> CloudNoDataMode.NODATA_ALPHA_ZERO
+                    else -> CloudNoDataMode.NODATA_NONE
                 }
                 binding.filamentView.setCloudDataSourceConfig(binding.filamentView.currentCloudEncoding, nd)
             }
@@ -219,15 +219,15 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         // Toggle Map Source: Blue Marble -> Satellit (Simulation) -> Satellit (Referenz Unlit) -> Blue Marble
         updateMapSourceButtonText()
         binding.btnToggleMapSource.setOnClickListener {
-            val isSat = binding.filamentView.isSatelliteMode
+            val req = binding.filamentView.requestedMapSource
             val isRef = binding.filamentView.isReferenceMode
             when {
-                !isSat -> {
+                req == MapSourcePreference.BLUE_MARBLE -> {
                     // Switch from Blue Marble to Satellit (Simulation)
-                    binding.filamentView.setMapMode(true)
                     binding.filamentView.setReferenceMode(false)
+                    binding.filamentView.setMapMode(true)
                 }
-                isSat && !isRef -> {
+                req == MapSourcePreference.SATELLITE && !isRef -> {
                     // Switch from Satellit (Simulation) to Satellit (Referenz Unlit)
                     binding.filamentView.setReferenceMode(true)
                 }
@@ -243,8 +243,8 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         // Toggle live cloud layer
         updateCloudButtonText()
         binding.btnToggleClouds.setOnClickListener {
-            cloudsVisible = !cloudsVisible
-            binding.filamentView.setCloudVisibility(cloudsVisible)
+            val next = !binding.filamentView.userCloudPreference
+            binding.filamentView.setCloudVisibility(next)
             updateCloudButtonText()
         }
 
@@ -377,39 +377,55 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     }
 
     private fun updateCloudButtonText() {
-        if (binding.filamentView.isSatelliteMode) return
-        if (!cloudsVisible) {
+        val config = binding.filamentView.currentConfiguration
+        if (config.activeTextureSource == EffectiveTextureSource.SATELLITE_VIIRS) {
+            binding.btnToggleClouds.isEnabled = false
+            binding.btnToggleClouds.alpha = 0.5f
+            binding.btnToggleClouds.text = "☁️ Wolken: Im Satellitenbild"
+            return
+        }
+        if (config.isReferenceMode) {
+            binding.btnToggleClouds.isEnabled = false
+            binding.btnToggleClouds.alpha = 0.5f
+            binding.btnToggleClouds.text = "☁️ Wolken: Unlit Referenz"
+            return
+        }
+
+        binding.btnToggleClouds.isEnabled = true
+        binding.btnToggleClouds.alpha = 1.0f
+        if (!binding.filamentView.userCloudPreference) {
             binding.btnToggleClouds.text = "☁️ Wolken: AUS"
         } else {
             val isLive = cloudDownloader.isLive
-            binding.btnToggleClouds.text = if (isLive) "☁️ Wolken: AN (🌐 Live)" else "☁️ Wolken: AN (💾 Archiv)"
+            val meta = cloudDownloader.metadataFlow.value
+            binding.btnToggleClouds.text = if (isLive) "☁️ Wolken: AN (${meta.provider})" else "☁️ Wolken: AN (💾 Archiv)"
         }
     }
 
     private fun updateMapSourceButtonText() {
-        val isRef = binding.filamentView.isReferenceMode
-        val isSat = binding.filamentView.isSatelliteMode
+        val config = binding.filamentView.currentConfiguration
         val date = currentSatelliteInfo?.dateUtc ?: "NASA VIIRS"
+        binding.globeOverlayView.setReferenceMode(config.isReferenceMode)
+
         when {
-            isRef -> {
-                binding.btnToggleMapSource.text = "🛰️ Satellit: Referenz ($date)"
-                binding.btnToggleClouds.isEnabled = false
-                binding.btnToggleClouds.alpha = 0.5f
-                binding.btnToggleClouds.text = "☁️ Wolken: Unlit Referenz"
+            config.isReferenceMode -> {
+                binding.btnToggleMapSource.text = if (config.activeTextureSource == EffectiveTextureSource.SATELLITE_VIIRS)
+                    "🛰️ Satellit: Referenz ($date)" else "🌍 Referenz (Blue Marble)"
             }
-            isSat -> {
+            config.activeTextureSource == EffectiveTextureSource.SATELLITE_VIIRS -> {
                 binding.btnToggleMapSource.text = "🛰️ Satellit: VIIRS ($date)"
-                binding.btnToggleClouds.isEnabled = false
-                binding.btnToggleClouds.alpha = 0.5f
-                binding.btnToggleClouds.text = "☁️ Wolken: Im Satellitenbild"
+            }
+            config.isSatellitePending -> {
+                binding.btnToggleMapSource.text = "🛰️ Satellit: Lädt..."
+            }
+            config.isSatelliteFailed -> {
+                binding.btnToggleMapSource.text = "🛰️ Satellit: Fehler (Fallback)"
             }
             else -> {
                 binding.btnToggleMapSource.text = "🌍 Karte: Blue Marble"
-                binding.btnToggleClouds.isEnabled = true
-                binding.btnToggleClouds.alpha = 1.0f
-                updateCloudButtonText()
             }
         }
+        updateCloudButtonText()
     }
 
     private fun updateBorderButtonText() {
@@ -431,14 +447,20 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             cloudDownloader.cloudUpdateFlow.collectLatest { file ->
                 binding.filamentView.updateLiveClouds(
                     file,
-                    IssFilamentView.CloudEncoding.GRAYSCALE_MASK,
-                    IssFilamentView.CloudNoDataMode.NODATA_NONE
+                    CloudEncoding.GRAYSCALE_MASK,
+                    CloudNoDataMode.NODATA_NONE
                 )
                 updateCloudButtonText()
             }
         }
         lifecycleScope.launch {
             cloudDownloader.isLiveFlow.collectLatest {
+                updateCloudButtonText()
+            }
+        }
+        lifecycleScope.launch {
+            cloudDownloader.metadataFlow.collectLatest { meta ->
+                Log.i("MainActivity", "Live cloud metadata updated: provider=${meta.provider}, dims=${meta.dimensions}, cache=${meta.cacheFileName}, obs=${meta.observationTime}")
                 updateCloudButtonText()
             }
         }
@@ -452,6 +474,18 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                     binding.filamentView.updateSatelliteTexture(it.file)
                     updateMapSourceButtonText()
                 }
+            }
+        }
+        lifecycleScope.launch {
+            gibsDownloader.isDownloadingFlow.collectLatest { isDownloading ->
+                val state = when {
+                    isDownloading -> SatelliteDownloadState.PENDING
+                    binding.filamentView.isSatelliteAvailable -> SatelliteDownloadState.SUCCEEDED
+                    currentSatelliteInfo == null -> SatelliteDownloadState.FAILED
+                    else -> SatelliteDownloadState.NOT_STARTED
+                }
+                binding.filamentView.setSatelliteDownloadState(state)
+                updateMapSourceButtonText()
             }
         }
     }

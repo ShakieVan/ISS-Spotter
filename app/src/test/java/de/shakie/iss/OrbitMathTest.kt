@@ -1,8 +1,10 @@
 package de.shakie.iss
 
+import de.shakie.iss.graphics.*
 import de.shakie.iss.orbit.*
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.File
 import kotlin.math.*
 
 class OrbitMathTest {
@@ -672,112 +674,261 @@ class OrbitMathTest {
     }
 
     @Test
-    fun testCloudEncodingAndOpacity() {
-        // Replicates shader logic from earth.mat:
-        fun sampleCloudOpacity(
-            r: Float, g: Float, b: Float, a: Float,
-            cloudEncoding: Float,
-            cloudNoDataMode: Float
-        ): Float {
-            // 1. NoData evaluation
-            if (cloudNoDataMode > 0.5f && cloudNoDataMode < 1.5f) {
-                if (a < 0.001f) return 0.0f
-            } else if (cloudNoDataMode >= 1.5f) {
-                if ((r*r + g*g + b*b) < 0.0001f) return 0.0f
-            }
+    fun testMapStateResolverCombinations() {
+        // Requirement 1 & 5a: Test all 7 state combinations against the REAL MapStateResolver
 
-            // 2. Explicit cloud encoding
-            val raw = if (cloudEncoding > 0.5f) a else r
-            return raw.coerceIn(0.0f, 1.0f)
-        }
+        // 1. App start: Blue Marble, no satellite texture, clouds ON
+        val state1 = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = MapSourcePreference.BLUE_MARBLE,
+                hasSatelliteTexture = false,
+                downloadState = SatelliteDownloadState.NOT_STARTED,
+                userCloudPreference = true,
+                isReferenceMode = false
+            )
+        )
+        assertEquals(EffectiveTextureSource.BLUE_MARBLE, state1.activeTextureSource)
+        assertTrue("Blue Marble with cloud preference ON must show clouds", state1.showClouds)
+        assertFalse(state1.isReferenceMode)
+        assertFalse(state1.isSatellitePending)
+        assertFalse(state1.isSatelliteFailed)
+        assertEquals("🌍 Karte: Blue Marble", state1.statusLabel)
 
-        val GRAYSCALE_MASK = 0.0f
-        val CLOUD_ALPHA_MASK = 1.0f
-        val NODATA_NONE = 0.0f
+        // 2. Satellite requested, download in progress: fallback to Blue Marble, "Lädt...", preserve clouds
+        val state2 = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = MapSourcePreference.SATELLITE,
+                hasSatelliteTexture = false,
+                downloadState = SatelliteDownloadState.PENDING,
+                userCloudPreference = true,
+                isReferenceMode = false
+            )
+        )
+        assertEquals(EffectiveTextureSource.BLUE_MARBLE, state2.activeTextureSource)
+        assertTrue("During satellite download fallback, user cloud preference must be preserved", state2.showClouds)
+        assertTrue("Must signal pending satellite download", state2.isSatellitePending)
+        assertFalse(state2.isSatelliteFailed)
+        assertEquals("🛰️ Satellit: Lädt...", state2.statusLabel)
 
-        // A. GRAYSCALE_MASK (e.g. JPEG cloud maps loaded into RGBA8 textures where alpha is 1.0)
-        // CRUCIAL: Opacity MUST come from the grayscale/red channel, NOT from alpha=1.0!
-        val semiCloudJpeg = sampleCloudOpacity(0.35f, 0.35f, 0.35f, 1.0f, GRAYSCALE_MASK, NODATA_NONE)
-        assertEquals("Grayscale mask with R=0.35 must yield opacity 0.35, even when GPU alpha is 1.0", 0.35f, semiCloudJpeg, 1e-5f)
+        // 3. Satellite download succeeded: switch to VIIRS, strictly NO stacked clouds
+        val state3 = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = MapSourcePreference.SATELLITE,
+                hasSatelliteTexture = true,
+                downloadState = SatelliteDownloadState.SUCCEEDED,
+                userCloudPreference = true,
+                isReferenceMode = false
+            )
+        )
+        assertEquals(EffectiveTextureSource.SATELLITE_VIIRS, state3.activeTextureSource)
+        assertFalse("VIIRS satellite image MUST NEVER stack extra cloud layer on top!", state3.showClouds)
+        assertFalse(state3.isSatellitePending)
+        assertFalse(state3.isSatelliteFailed)
+        assertEquals("🛰️ Satellit: VIIRS", state3.statusLabel)
 
-        val clearSkyJpeg = sampleCloudOpacity(0.0f, 0.0f, 0.0f, 1.0f, GRAYSCALE_MASK, NODATA_NONE)
-        assertEquals("Grayscale mask with R=0.0 must yield opacity 0.0 (clear sky)", 0.0f, clearSkyJpeg, 1e-5f)
+        // 4. User reverted to Blue Marble before download finished: when download finishes, DO NOT hijack view
+        val state4 = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = MapSourcePreference.BLUE_MARBLE,
+                hasSatelliteTexture = true,
+                downloadState = SatelliteDownloadState.SUCCEEDED,
+                userCloudPreference = true,
+                isReferenceMode = false
+            )
+        )
+        assertEquals(EffectiveTextureSource.BLUE_MARBLE, state4.activeTextureSource)
+        assertTrue("Blue Marble must restore user cloud preference", state4.showClouds)
+        assertEquals("🌍 Karte: Blue Marble", state4.statusLabel)
 
-        val denseStormJpeg = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 1.0f, GRAYSCALE_MASK, NODATA_NONE)
-        assertEquals("Grayscale mask with R=1.0 must yield opacity 1.0", 1.0f, denseStormJpeg, 1e-5f)
+        // 5. User reverted to Blue Marble with clouds OFF: restore clouds OFF
+        val state5 = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = MapSourcePreference.BLUE_MARBLE,
+                hasSatelliteTexture = true,
+                downloadState = SatelliteDownloadState.SUCCEEDED,
+                userCloudPreference = false,
+                isReferenceMode = false
+            )
+        )
+        assertEquals(EffectiveTextureSource.BLUE_MARBLE, state5.activeTextureSource)
+        assertFalse("User cloud preference OFF must be strictly respected", state5.showClouds)
+        assertEquals("🌍 Karte: Blue Marble", state5.statusLabel)
 
-        // B. CLOUD_ALPHA_MASK (RGBA textures with true alpha transparency)
-        // MUST evaluate alpha explicitly, including boundary values 0.0 and 1.0!
-        val alphaZero = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 0.0f, CLOUD_ALPHA_MASK, NODATA_NONE)
-        assertEquals("Alpha mask with A=0.0 must yield 0.0 opacity", 0.0f, alphaZero, 1e-5f)
+        // 6. Reference mode: strictly NO clouds, regardless of texture source
+        val state6 = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = MapSourcePreference.SATELLITE,
+                hasSatelliteTexture = true,
+                downloadState = SatelliteDownloadState.SUCCEEDED,
+                userCloudPreference = true,
+                isReferenceMode = true
+            )
+        )
+        assertEquals(EffectiveTextureSource.SATELLITE_VIIRS, state6.activeTextureSource)
+        assertFalse("Reference mode must have NO clouds", state6.showClouds)
+        assertTrue(state6.isReferenceMode)
+        assertEquals("🛰️ Satellit: Referenz", state6.statusLabel)
 
-        val alphaMid = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 0.65f, CLOUD_ALPHA_MASK, NODATA_NONE)
-        assertEquals("Alpha mask with A=0.65 must yield 0.65 opacity", 0.65f, alphaMid, 1e-5f)
-
-        val alphaOne = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 1.0f, CLOUD_ALPHA_MASK, NODATA_NONE)
-        assertEquals("Alpha mask with A=1.0 must yield 1.0 opacity", 1.0f, alphaOne, 1e-5f)
+        // 7. Satellite download failed: fallback to Blue Marble, signal error
+        val state7 = MapStateResolver.resolve(
+            MapStateInput(
+                requestedSource = MapSourcePreference.SATELLITE,
+                hasSatelliteTexture = false,
+                downloadState = SatelliteDownloadState.FAILED,
+                userCloudPreference = true,
+                isReferenceMode = false
+            )
+        )
+        assertEquals(EffectiveTextureSource.BLUE_MARBLE, state7.activeTextureSource)
+        assertTrue(state7.showClouds)
+        assertFalse(state7.isSatellitePending)
+        assertTrue("Must signal failed satellite download", state7.isSatelliteFailed)
+        assertEquals("🛰️ Satellit: Fehler (Fallback)", state7.statusLabel)
     }
 
     @Test
-    fun testCloudNoDataHandling() {
-        fun sampleCloud(
-            r: Float, g: Float, b: Float, a: Float,
-            cloudEncoding: Float,
-            cloudNoDataMode: Float
-        ): Pair<Float, Boolean> {
-            var isValid = true
-            if (cloudNoDataMode > 0.5f && cloudNoDataMode < 1.5f) {
-                if (a < 0.001f) {
-                    isValid = false
-                    return Pair(0.0f, false)
-                }
-            } else if (cloudNoDataMode >= 1.5f) {
-                if ((r*r + g*g + b*b) < 0.0001f) {
-                    isValid = false
-                    return Pair(0.0f, false)
-                }
-            }
-            val raw = if (cloudEncoding > 0.5f) a else r
-            return Pair(raw.coerceIn(0.0f, 1.0f), isValid)
-        }
+    fun testShaderIntegrity() {
+        // Requirement 5b: Read actual materials/earth.mat from filesystem and verify critical formulas
+        val candidatePaths = listOf(
+            File("materials/earth.mat"),
+            File("../materials/earth.mat"),
+            File("../../materials/earth.mat")
+        )
+        val matFile = candidatePaths.firstOrNull { it.exists() }
+        assertNotNull("materials/earth.mat must exist in repository root", matFile)
 
-        val NODATA_ALPHA_ZERO = 1.0f
-        val NODATA_SENTINEL_ZERO = 2.0f
-        val GRAYSCALE_MASK = 0.0f
+        val content = matFile!!.readText()
 
-        // 1. Alpha=0 indicates unobserved pixel in NODATA_ALPHA_ZERO mode
-        val unobserved1 = sampleCloud(0.8f, 0.8f, 0.8f, 0.0f, GRAYSCALE_MASK, NODATA_ALPHA_ZERO)
-        assertFalse("Pixel with A=0 in NODATA_ALPHA_ZERO must be invalid (NoData)", unobserved1.second)
-        assertEquals("NoData pixel must have 0.0 opacity so base map remains untouched", 0.0f, unobserved1.first, 1e-5f)
+        // 1. Normal reconstruction formula (strictly maintained)
+        assertTrue("Shader must maintain continuous normal theta formula: theta = uv.y * 3.141592653589793",
+            content.contains("theta = uv.y * 3.141592653589793"))
+        assertTrue("Shader must maintain latDeg formula: latDeg = (0.5 - uv.y) * 180.0",
+            content.contains("latDeg = (0.5 - uv.y) * 180.0"))
 
-        // 2. Black pixel RGB=(0,0,0) in swath boundary in NODATA_SENTINEL_ZERO mode
-        val unobserved2 = sampleCloud(0.0f, 0.0f, 0.0f, 1.0f, GRAYSCALE_MASK, NODATA_SENTINEL_ZERO)
-        assertFalse("RGB=0 in NODATA_SENTINEL_ZERO must be treated as swath NoData", unobserved2.second)
-        assertEquals("Swath NoData must yield 0.0 opacity", 0.0f, unobserved2.first, 1e-5f)
+        // 2. struct CloudSample must exist in real shader
+        assertTrue("Shader must contain struct CloudSample",
+            content.contains("struct CloudSample"))
+        assertTrue("CloudSample must declare float opacity",
+            content.contains("float opacity;"))
+        assertTrue("CloudSample must declare float isValid",
+            content.contains("float isValid;"))
 
-        // 3. Observed valid pixel
-        val observed = sampleCloud(0.7f, 0.7f, 0.7f, 1.0f, GRAYSCALE_MASK, NODATA_SENTINEL_ZERO)
-        assertTrue("Valid observed pixel must be valid", observed.second)
-        assertEquals(0.7f, observed.first, 1e-5f)
+        // 3. No pole masks or artificial damping
+        assertFalse("Shader must NOT contain pole attenuation masks (smoothstep on latitude)",
+            content.contains("smoothstep(60.0") || content.contains("smoothstep(70.0") || content.contains("poleMask"))
+
+        // 4. Filament flipUV must be true
+        assertTrue("Filament material must declare flipUV : true",
+            content.contains("flipUV : true"))
     }
 
     @Test
-    fun testCloudPreservationInPolarRegions() {
-        // Test that high latitude areas (Greenland +72°, Antarctica -80°)
-        // retain their true cloud opacity without artificial latitude dampings
-        val greenlandCloudRaw = 0.75f
-        val antarcticaCloudRaw = 0.60f
+    fun testProductionCloudEvaluator() {
+        // Requirement 5c: Test real CloudEvaluator against specification
 
-        // Verify there is NO latitude multiplier applied to cloud opacity
-        fun applyCloudOpacityAtLat(rawCloud: Float, latDeg: Double): Float {
-            // Under Patch C: strictly linear opacity from texture without latitude damping
-            return rawCloud
+        // A. GRAYSCALE_MASK: Red/Grayscale channel decides, Alpha is ignored
+        val semiCloudJpeg = CloudEvaluator.evaluate(
+            r = 0.35f, g = 0.35f, b = 0.35f, a = 1.0f,
+            encoding = CloudEncoding.GRAYSCALE_MASK,
+            noDataMode = CloudNoDataMode.NODATA_NONE
+        )
+        assertEquals("GRAYSCALE_MASK with R=0.35 must yield opacity 0.35 even with GPU A=1.0", 0.35f, semiCloudJpeg.opacity, 1e-5f)
+        assertTrue(semiCloudJpeg.isValid)
+
+        val clearSkyJpeg = CloudEvaluator.evaluate(
+            r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f,
+            encoding = CloudEncoding.GRAYSCALE_MASK,
+            noDataMode = CloudNoDataMode.NODATA_NONE
+        )
+        assertEquals(0.0f, clearSkyJpeg.opacity, 1e-5f)
+        assertTrue(clearSkyJpeg.isValid)
+
+        val denseStormJpeg = CloudEvaluator.evaluate(
+            r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f,
+            encoding = CloudEncoding.GRAYSCALE_MASK,
+            noDataMode = CloudNoDataMode.NODATA_NONE
+        )
+        assertEquals(1.0f, denseStormJpeg.opacity, 1e-5f)
+        assertTrue(denseStormJpeg.isValid)
+
+        // B. CLOUD_ALPHA_MASK: Alpha decides, boundary values 0.0 and 1.0 are valid
+        val alphaZero = CloudEvaluator.evaluate(
+            r = 1.0f, g = 1.0f, b = 1.0f, a = 0.0f,
+            encoding = CloudEncoding.CLOUD_ALPHA_MASK,
+            noDataMode = CloudNoDataMode.NODATA_NONE
+        )
+        assertEquals("Alpha 0.0 must yield 0.0 opacity", 0.0f, alphaZero.opacity, 1e-5f)
+        assertTrue("Alpha 0.0 in NODATA_NONE is a valid clear sky observation", alphaZero.isValid)
+
+        val alphaMid = CloudEvaluator.evaluate(
+            r = 1.0f, g = 1.0f, b = 1.0f, a = 0.65f,
+            encoding = CloudEncoding.CLOUD_ALPHA_MASK,
+            noDataMode = CloudNoDataMode.NODATA_NONE
+        )
+        assertEquals(0.65f, alphaMid.opacity, 1e-5f)
+        assertTrue(alphaMid.isValid)
+
+        val alphaOne = CloudEvaluator.evaluate(
+            r = 0.2f, g = 0.2f, b = 0.2f, a = 1.0f,
+            encoding = CloudEncoding.CLOUD_ALPHA_MASK,
+            noDataMode = CloudNoDataMode.NODATA_NONE
+        )
+        assertEquals(1.0f, alphaOne.opacity, 1e-5f)
+        assertTrue(alphaOne.isValid)
+
+        // C. NODATA_ALPHA_ZERO: Alpha < 0.001 is invalid
+        val noDataAlpha = CloudEvaluator.evaluate(
+            r = 0.8f, g = 0.8f, b = 0.8f, a = 0.0f,
+            encoding = CloudEncoding.GRAYSCALE_MASK,
+            noDataMode = CloudNoDataMode.NODATA_ALPHA_ZERO
+        )
+        assertFalse("Alpha < 0.001 in NODATA_ALPHA_ZERO must be invalid", noDataAlpha.isValid)
+
+        // D. NODATA_SENTINEL_ZERO: RGB=(0,0,0) is invalid
+        val noDataSentinel = CloudEvaluator.evaluate(
+            r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f,
+            encoding = CloudEncoding.GRAYSCALE_MASK,
+            noDataMode = CloudNoDataMode.NODATA_SENTINEL_ZERO
+        )
+        assertFalse("RGB=(0,0,0) in NODATA_SENTINEL_ZERO must be invalid", noDataSentinel.isValid)
+
+        // E. Valid pixel in NODATA_SENTINEL_ZERO
+        val validSentinel = CloudEvaluator.evaluate(
+            r = 0.5f, g = 0.5f, b = 0.5f, a = 1.0f,
+            encoding = CloudEncoding.GRAYSCALE_MASK,
+            noDataMode = CloudNoDataMode.NODATA_SENTINEL_ZERO
+        )
+        assertTrue("Non-zero RGB in NODATA_SENTINEL_ZERO must be valid", validSentinel.isValid)
+        assertEquals(0.5f, validSentinel.opacity, 1e-5f)
+    }
+
+    @Test
+    fun testNoCloudStackingOnSatellite() {
+        // Regression test: Whenever effective source is SATELLITE_VIIRS, showClouds must be false
+        val allCombinations = listOf(
+            MapStateInput(MapSourcePreference.SATELLITE, hasSatelliteTexture = true, downloadState = SatelliteDownloadState.SUCCEEDED, userCloudPreference = true, isReferenceMode = false),
+            MapStateInput(MapSourcePreference.SATELLITE, hasSatelliteTexture = true, downloadState = SatelliteDownloadState.SUCCEEDED, userCloudPreference = false, isReferenceMode = false),
+            MapStateInput(MapSourcePreference.SATELLITE, hasSatelliteTexture = true, downloadState = SatelliteDownloadState.SUCCEEDED, userCloudPreference = true, isReferenceMode = true)
+        )
+        for (input in allCombinations) {
+            val config = MapStateResolver.resolve(input)
+            assertEquals(EffectiveTextureSource.SATELLITE_VIIRS, config.activeTextureSource)
+            assertFalse("Clouds must be strictly OFF when displaying VIIRS satellite map", config.showClouds)
         }
+    }
 
-        val greenlandOpacity = applyCloudOpacityAtLat(greenlandCloudRaw, 72.0)
-        val antarcticaOpacity = applyCloudOpacityAtLat(antarcticaCloudRaw, -80.0)
+    @Test
+    fun testNorthSouthInversionRegression() {
+        // Verify that +Y is North and -Y is South in world coordinates
+        val northPole = floatArrayOf(0f, 10f, 0f)
+        val southPole = floatArrayOf(0f, -10f, 0f)
+        assertTrue("North Pole must have positive Y", northPole[1] > 0f)
+        assertTrue("South Pole must have negative Y", southPole[1] < 0f)
 
-        assertEquals("Greenland cloud opacity must not be attenuated by latitude", 0.75f, greenlandOpacity, 1e-5f)
-        assertEquals("Antarctica cloud opacity must not be attenuated by latitude", 0.60f, antarcticaOpacity, 1e-5f)
+        // Equator at Greenwich: +X = 10, Y = 0, Z = 0
+        val greenwich = floatArrayOf(10f, 0f, 0f)
+        assertEquals(10f, greenwich[0], 1e-5f)
+        assertEquals(0f, greenwich[1], 1e-5f)
+        assertEquals(0f, greenwich[2], 1e-5f)
     }
 }

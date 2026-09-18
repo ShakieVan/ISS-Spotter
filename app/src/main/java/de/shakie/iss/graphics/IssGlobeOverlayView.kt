@@ -180,6 +180,14 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         letterSpacing = 0.08f
     }
 
+    var isReferenceMode: Boolean = false
+        private set
+
+    fun setReferenceMode(enabled: Boolean) {
+        isReferenceMode = enabled
+        postInvalidateOnAnimation()
+    }
+
     fun setLabelsVisible(visible: Boolean) {
         bordersVisible = visible
         postInvalidateOnAnimation()
@@ -227,6 +235,18 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         Matrix.setLookAtM(viewMatrix, 0, eyeX, eyeY, eyeZ, targetX, targetY, targetZ, upX, upY, upZ)
         Matrix.perspectiveM(projMatrix, 0, fovYDeg, aspect, 0.1f, 150.0f)
         Matrix.multiplyMM(vpMatrix, 0, projMatrix, 0, viewMatrix, 0)
+
+        // In reference mode, disable all decorative elements:
+        // - No optical lens flare (corona, rays, ghosts)
+        // - No constellation labels
+        // - No country labels/borders
+        // Only diagnostic coordinate markers are shown if explicitly enabled.
+        if (isReferenceMode) {
+            if (diagnosticMarkersVisible) {
+                drawDiagnosticMarkers(canvas, eyeX, eyeY, eyeZ, w, h)
+            }
+            return
+        }
 
         // 2. Optical Screen-Space Lens Flare (when Sun is in view and not eclipsed by Earth)
         drawOpticalLensFlare(canvas, eyeX, eyeY, eyeZ, w, h)

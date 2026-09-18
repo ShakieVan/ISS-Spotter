@@ -29,11 +29,25 @@ class LiveCloudDownloader(private val context: Context) {
     val isLiveFlow: kotlinx.coroutines.flow.StateFlow<Boolean> = _isLiveFlow
     val isLive: Boolean get() = _isLiveFlow.value
 
+    private val _metadataFlow = kotlinx.coroutines.flow.MutableStateFlow(
+        de.shakie.iss.graphics.CloudMetadata()
+    )
+    val metadataFlow: kotlinx.coroutines.flow.StateFlow<de.shakie.iss.graphics.CloudMetadata> = _metadataFlow
+
     private val cloudCacheFile = File(context.cacheDir, "live_clouds.jpg")
 
     init {
         // If cache already exists from a previous session, activate it immediately
         if (cloudCacheFile.exists() && cloudCacheFile.length() > 10000) {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(cloudCacheFile.absolutePath, opts)
+            _metadataFlow.value = de.shakie.iss.graphics.CloudMetadata(
+                provider = "Matteason (Testquelle)",
+                cacheFileName = cloudCacheFile.name,
+                dimensions = "${opts.outWidth}x${opts.outHeight}",
+                downloadTimeMillis = cloudCacheFile.lastModified(),
+                observationTime = "Aufnahmezeit: Unbekannt"
+            )
             _isLiveFlow.value = true
             _cloudUpdateFlow.tryEmit(cloudCacheFile)
         }
@@ -71,7 +85,15 @@ class LiveCloudDownloader(private val context: Context) {
                             BitmapFactory.decodeFile(tempFile.absolutePath, opts)
                             if (opts.outWidth > 0 && opts.outHeight > 0) {
                                 tempFile.renameTo(cloudCacheFile)
-                                Log.i("LiveCloudDownloader", "Downloaded fresh satellite cloud map (${opts.outWidth}x${opts.outHeight}) from $url")
+                                val meta = de.shakie.iss.graphics.CloudMetadata(
+                                    provider = "Matteason (Testquelle)",
+                                    cacheFileName = cloudCacheFile.name,
+                                    dimensions = "${opts.outWidth}x${opts.outHeight}",
+                                    downloadTimeMillis = System.currentTimeMillis(),
+                                    observationTime = "Aufnahmezeit: Unbekannt"
+                                )
+                                _metadataFlow.value = meta
+                                Log.i("LiveCloudDownloader", "Downloaded fresh satellite cloud map (${opts.outWidth}x${opts.outHeight}) from $url. Provider: ${meta.provider}, ${meta.observationTime}")
                                 _isLiveFlow.value = true
                                 _cloudUpdateFlow.emit(cloudCacheFile)
                                 true

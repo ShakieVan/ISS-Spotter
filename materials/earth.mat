@@ -22,21 +22,27 @@ material {
 }
 
 fragment {
-    // Dedicated cloud opacity and validity evaluation (Patch C)
+    // Dedicated cloud opacity and validity evaluation (Preserving NoData)
     // Decouples explicit channel encoding (Grayscale vs. Alpha) from NoData validity.
-    float sampleCloudOpacity(float2 coords) {
+    struct CloudSample {
+        float opacity;
+        float isValid; // 1.0 = observation present, 0.0 = NoData
+    };
+
+    CloudSample sampleCloud(float2 coords) {
         float4 cSample = texture(materialParams_cloudMap, coords);
+        float isValid = 1.0;
 
         // 1. NoData evaluation (isolated from cloud opacity)
         if (materialParams.cloudNoDataMode > 0.5 && materialParams.cloudNoDataMode < 1.5) {
             // NODATA_ALPHA_ZERO: unobserved / missing observation
             if (cSample.a < 0.001) {
-                return 0.0;
+                isValid = 0.0;
             }
         } else if (materialParams.cloudNoDataMode >= 1.5) {
             // NODATA_SENTINEL_ZERO: RGB=(0,0,0) unobserved swath boundary
             if (dot(cSample.rgb, cSample.rgb) < 0.0001) {
-                return 0.0;
+                isValid = 0.0;
             }
         }
 
@@ -44,7 +50,12 @@ fragment {
         // 0.0 = GRAYSCALE_MASK: brightness from defined grayscale/red channel (JPEG)
         // 1.0 = CLOUD_ALPHA_MASK: cloud opacity directly from alpha, strictly [0.0, 1.0]
         float raw = (materialParams.cloudEncoding > 0.5) ? cSample.a : cSample.r;
-        return clamp(raw, 0.0, 1.0);
+        float opacity = clamp(raw, 0.0, 1.0);
+
+        CloudSample result;
+        result.opacity = opacity;
+        result.isValid = isValid;
+        return result;
     }
 
     void material(inout MaterialInputs material) {
@@ -71,7 +82,7 @@ fragment {
         float sunDot = dot(normal, sunDir);
 
         // =========================================================
-        // SHADER DIAGNOSTIC OUTPUTS (PATCH A)
+        // SHADER DIAGNOSTIC OUTPUTS
         // =========================================================
         // 1.0: Normal as RGB (North=+Y -> Green, South=-Y -> Purple, East=-Z -> Yellow-Green, West=+Z -> Cyan)
         if (materialParams.debugVisualMode > 0.5 && materialParams.debugVisualMode < 1.5) {
@@ -85,8 +96,34 @@ fragment {
             return;
         }
         // 3.0: Shader UV coordinates as RG (U -> Red, V -> Green)
-        if (materialParams.debugVisualMode >= 2.5) {
+        if (materialParams.debugVisualMode >= 2.5 && materialParams.debugVisualMode < 3.5) {
             material.baseColor = float4(uv.x, uv.y, 0.0, 1.0);
+            return;
+        }
+        // 4.0: Raw cloud texture RGB
+        if (materialParams.debugVisualMode >= 3.5 && materialParams.debugVisualMode < 4.5) {
+            float4 rawCloud = texture(materialParams_cloudMap, uv);
+            material.baseColor = float4(rawCloud.rgb, 1.0);
+            return;
+        }
+        // 5.0: Evaluated mask channel (Grayscale or Alpha depending on cloudEncoding)
+        if (materialParams.debugVisualMode >= 4.5 && materialParams.debugVisualMode < 5.5) {
+            CloudSample cs = sampleCloud(uv);
+            material.baseColor = float4(float3(cs.opacity), 1.0);
+            return;
+        }
+        // 6.0: Validity mask (Green = valid observation, Magenta = NoData)
+        if (materialParams.debugVisualMode >= 5.5 && materialParams.debugVisualMode < 6.5) {
+            CloudSample cs = sampleCloud(uv);
+            float3 valColor = (cs.isValid > 0.5) ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 1.0);
+            material.baseColor = float4(valColor, 1.0);
+            return;
+        }
+        // 7.0: Effective cloud opacity after NoData filtering
+        if (materialParams.debugVisualMode >= 6.5) {
+            CloudSample cs = sampleCloud(uv);
+            float eff = (cs.isValid > 0.5) ? cs.opacity : 0.0;
+            material.baseColor = float4(float3(eff), 1.0);
             return;
         }
 
@@ -131,12 +168,16 @@ fragment {
         // =========================================================
         float4 nightSample = texture(materialParams_nightMap, uv);
 
-        // Patch C: Clean, linear cloud opacity evaluation
-        float cloudAlpha = sampleCloudOpacity(uv) * materialParams.showClouds;
+        // Clean, linear cloud opacity evaluation with NoData awareness
+        CloudSample cSample = sampleCloud(uv);
+        float effectiveOpacity = (cSample.isValid > 0.5) ? cSample.opacity : 0.0;
+        float cloudAlpha = effectiveOpacity * materialParams.showClouds;
 
         // Cloud shadow on Earth surface (strictly using the exact same evaluation function)
         float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
-        float shadowAlpha = sampleCloudOpacity(shadowUv) * materialParams.showClouds;
+        CloudSample shadowSample = sampleCloud(shadowUv);
+        float effectiveShadowOpacity = (shadowSample.isValid > 0.5) ? shadowSample.opacity : 0.0;
+        float shadowAlpha = effectiveShadowOpacity * materialParams.showClouds;
         float shadowFactor = 1.0 - shadowAlpha * 0.55 * max(sunDot, 0.0);
 
         // Specular sun glint on ocean: strictly confined to open ocean, strictly daytime, physically bounded
