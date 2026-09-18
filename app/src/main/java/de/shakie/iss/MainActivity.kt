@@ -24,7 +24,9 @@ import de.shakie.iss.observer.DeviceOrientation
 import de.shakie.iss.observer.OrientationSensorHelper
 import de.shakie.iss.orbit.IssSnapshot
 import de.shakie.iss.orbit.IssTracker
+import de.shakie.iss.weather.GibsSatelliteDownloader
 import de.shakie.iss.weather.LiveCloudDownloader
+import de.shakie.iss.weather.SatelliteInfo
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -34,8 +36,10 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     private lateinit var issTracker: IssTracker
     private lateinit var cloudDownloader: LiveCloudDownloader
+    private lateinit var gibsDownloader: GibsSatelliteDownloader
     private lateinit var orientationHelper: OrientationSensorHelper
     private var arCameraManager: ArCameraManager? = null
+    private var currentSatelliteInfo: SatelliteInfo? = null
 
     private var currentOrientation = DeviceOrientation(0f, 0f, 0f, FloatArray(16))
     private var bordersVisible = true
@@ -81,6 +85,11 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 bordersVisible = intent.getBooleanExtra("borders", true)
                 binding.filamentView.setBorderVisibility(bordersVisible)
                 updateBorderButtonText()
+            }
+            if (intent.hasExtra("satellite")) {
+                val sat = intent.getBooleanExtra("satellite", false)
+                binding.filamentView.setMapMode(sat)
+                updateMapSourceButtonText()
             }
             binding.filamentView.onCameraModified?.invoke(binding.filamentView.cameraController.isModified())
             Log.i("MainActivity", "Debug scene updated: yaw=${binding.filamentView.cameraController.yawOffsetDeg}, pitch=${binding.filamentView.cameraController.pitchOffsetDeg}, zoom=${binding.filamentView.cameraController.zoomFactor}, time=$debugTimeOverride, freeze=$debugFreeze")
@@ -128,11 +137,13 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
         issTracker = IssTracker(this)
         cloudDownloader = LiveCloudDownloader(this)
+        gibsDownloader = GibsSatelliteDownloader(this)
         orientationHelper = OrientationSensorHelper(this)
 
         setupUI()
         setupSensors()
         setupCloudSync()
+        setupSatelliteSync()
         checkPermissions()
 
         val filter = IntentFilter("de.shakie.iss.DEBUG_SCENE")
@@ -147,6 +158,14 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
         binding.btnModeObserver.setOnClickListener {
             switchToObserverMode()
+        }
+
+        // Toggle Map Source: Blue Marble vs NASA GIBS VIIRS Satellite
+        updateMapSourceButtonText()
+        binding.btnToggleMapSource.setOnClickListener {
+            val nextMode = !binding.filamentView.isSatelliteMode
+            binding.filamentView.setMapMode(nextMode)
+            updateMapSourceButtonText()
         }
 
         // Toggle live cloud layer
@@ -254,11 +273,28 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     }
 
     private fun updateCloudButtonText() {
+        if (binding.filamentView.isSatelliteMode) return
         if (!cloudsVisible) {
             binding.btnToggleClouds.text = "☁️ Wolken: AUS"
         } else {
             val isLive = cloudDownloader.isLive
             binding.btnToggleClouds.text = if (isLive) "☁️ Wolken: AN (🌐 Live)" else "☁️ Wolken: AN (💾 Archiv)"
+        }
+    }
+
+    private fun updateMapSourceButtonText() {
+        val isSat = binding.filamentView.isSatelliteMode
+        if (isSat) {
+            val date = currentSatelliteInfo?.dateUtc ?: "NASA VIIRS"
+            binding.btnToggleMapSource.text = "🛰️ Satellit: VIIRS ($date)"
+            binding.btnToggleClouds.isEnabled = false
+            binding.btnToggleClouds.alpha = 0.5f
+            binding.btnToggleClouds.text = "☁️ Wolken: Im Satellitenbild"
+        } else {
+            binding.btnToggleMapSource.text = "🌍 Karte: Blue Marble"
+            binding.btnToggleClouds.isEnabled = true
+            binding.btnToggleClouds.alpha = 1.0f
+            updateCloudButtonText()
         }
     }
 
@@ -277,6 +313,18 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         lifecycleScope.launch {
             cloudDownloader.isLiveFlow.collectLatest {
                 updateCloudButtonText()
+            }
+        }
+    }
+
+    private fun setupSatelliteSync() {
+        lifecycleScope.launch {
+            gibsDownloader.satelliteInfoFlow.collectLatest { satInfo ->
+                satInfo?.let {
+                    currentSatelliteInfo = it
+                    binding.filamentView.updateSatelliteTexture(it.file)
+                    updateMapSourceButtonText()
+                }
             }
         }
     }
@@ -474,6 +522,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         stopLocationUpdates()
         issTracker.destroy()
         cloudDownloader.destroy()
+        gibsDownloader.destroy()
         arCameraManager?.stopCamera()
         binding.filamentView.destroy()
     }

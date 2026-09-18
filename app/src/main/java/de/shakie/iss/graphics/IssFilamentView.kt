@@ -76,6 +76,9 @@ class IssFilamentView @JvmOverloads constructor(
     private var nightTexture: Texture? = null
     private var cloudTexture: Texture? = null
     private var borderTexture: Texture? = null
+    private var satelliteTexture: Texture? = null
+    var isSatelliteMode: Boolean = false
+        private set
 
     // ISS Model
     private var ubershaderProvider: UbershaderProvider? = null
@@ -407,6 +410,63 @@ class IssFilamentView @JvmOverloads constructor(
         }
     }
 
+    fun updateSatelliteTexture(satFile: File) {
+        try {
+            if (!satFile.exists()) return
+            val bitmap = BitmapFactory.decodeFile(satFile.absolutePath) ?: return
+            val oldTexture = satelliteTexture
+            val w = bitmap.width
+            val h = bitmap.height
+            val maxDim = max(w, h)
+            val numLevels = (1 + floor(log2(maxDim.toDouble()))).toInt()
+            val newTexture = Texture.Builder()
+                .width(w)
+                .height(h)
+                .levels(numLevels)
+                .usage(Texture.Usage.DEFAULT or Texture.Usage.GEN_MIPMAPPABLE)
+                .sampler(Texture.Sampler.SAMPLER_2D)
+                .format(Texture.InternalFormat.SRGB8_A8)
+                .build(engine)
+            TextureHelper.setBitmap(engine, newTexture, 0, bitmap)
+            bitmap.recycle()
+            newTexture.generateMipmaps(engine)
+
+            satelliteTexture = newTexture
+            oldTexture?.let { engine.destroyTexture(it) }
+
+            if (isSatelliteMode) {
+                val sampler = TextureSampler(
+                    TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
+                    TextureSampler.MagFilter.LINEAR,
+                    TextureSampler.WrapMode.REPEAT
+                ).apply { anisotropy = 8.0f }
+                earthMaterialInstance?.setParameter("dayMap", newTexture, sampler)
+            }
+            Log.i("IssFilamentView", "Updated NASA GIBS satellite texture (${w}x${h})")
+        } catch (e: Exception) {
+            Log.w("IssFilamentView", "Failed to update satellite texture: ${e.message}")
+        }
+    }
+
+    fun setMapMode(useSatellite: Boolean) {
+        isSatelliteMode = useSatellite
+        val sampler = TextureSampler(
+            TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR,
+            TextureSampler.MagFilter.LINEAR,
+            TextureSampler.WrapMode.REPEAT
+        ).apply { anisotropy = 8.0f }
+
+        if (useSatellite && satelliteTexture != null) {
+            earthMaterialInstance?.setParameter("dayMap", satelliteTexture!!, sampler)
+            earthMaterialInstance?.setParameter("showClouds", 0.0f)
+            Log.i("IssFilamentView", "Switched Earth map mode to NASA GIBS VIIRS Satellit")
+        } else {
+            dayTexture?.let { earthMaterialInstance?.setParameter("dayMap", it, sampler) }
+            earthMaterialInstance?.setParameter("showClouds", showClouds)
+            Log.i("IssFilamentView", "Switched Earth map mode to NASA Blue Marble")
+        }
+    }
+
     fun setSnapshot(snapshot: IssSnapshot) {
         currentSnapshot = snapshot
     }
@@ -727,6 +787,7 @@ class IssFilamentView @JvmOverloads constructor(
         atmosphereMaterial?.let { engine.destroyMaterial(it) }
         atmosphereMaterialInstance?.let { engine.destroyMaterialInstance(it) }
         dayTexture?.let { engine.destroyTexture(it) }
+        satelliteTexture?.let { engine.destroyTexture(it) }
         nightTexture?.let { engine.destroyTexture(it) }
         cloudTexture?.let { engine.destroyTexture(it) }
         borderTexture?.let { engine.destroyTexture(it) }
