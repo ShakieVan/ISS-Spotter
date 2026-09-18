@@ -45,11 +45,11 @@ class OrbitCameraController {
             floatArrayOf(0f, 0f, 1f)
         }
 
-        // East tangent = cross(upIss, northTangent)
+        // East tangent = cross(northTangent, upIss) on standard Earth sphere where East is -Z
         val eastTangent = floatArrayOf(
-            upIss[1] * northTangent[2] - upIss[2] * northTangent[1],
-            upIss[2] * northTangent[0] - upIss[0] * northTangent[2],
-            upIss[0] * northTangent[1] - upIss[1] * northTangent[0]
+            northTangent[1] * upIss[2] - northTangent[2] * upIss[1],
+            northTangent[2] * upIss[0] - northTangent[0] * upIss[2],
+            northTangent[0] * upIss[1] - northTangent[1] * upIss[0]
         )
 
         // 2. Base Forward, Up & Right aligned strictly to North (North is always screen UP)

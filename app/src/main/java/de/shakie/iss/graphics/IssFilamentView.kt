@@ -451,7 +451,7 @@ class IssFilamentView @JvmOverloads constructor(
 
         val issX = issRadius * cos(issLatRad) * cos(issLonRad)
         val issY = issRadius * sin(issLatRad)
-        val issZ = issRadius * cos(issLatRad) * sin(issLonRad)
+        val issZ = -issRadius * cos(issLatRad) * sin(issLonRad)
         val issPos = floatArrayOf(issX, issY, issZ)
 
         // Observer position on Earth surface
@@ -462,7 +462,7 @@ class IssFilamentView @JvmOverloads constructor(
 
         val obsX = earthRadius * cos(obsLatRad) * cos(obsLonRad)
         val obsY = earthRadius * sin(obsLatRad)
-        val obsZ = earthRadius * cos(obsLatRad) * sin(obsLonRad)
+        val obsZ = -earthRadius * cos(obsLatRad) * sin(obsLonRad)
         val obsPos = floatArrayOf(obsX, obsY, obsZ)
 
         // 4. Update ISS Entity Position & Orientation in Space
@@ -476,7 +476,7 @@ class IssFilamentView @JvmOverloads constructor(
                 Matrix.translateM(transform, 0, issX, issY, issZ)
 
                 Matrix.scaleM(transform, 0, 0.009f, 0.009f, 0.009f)
-                Matrix.rotateM(transform, 0, Math.toDegrees(-issLonRad.toDouble()).toFloat(), 0f, 1f, 0f)
+                Matrix.rotateM(transform, 0, Math.toDegrees(issLonRad.toDouble()).toFloat(), 0f, 1f, 0f)
                 Matrix.rotateM(transform, 0, Math.toDegrees(issLatRad.toDouble()).toFloat(), 0f, 0f, 1f)
 
                 tm.setTransform(instance, transform)

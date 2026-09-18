@@ -179,7 +179,7 @@ object CountryCatalog {
         CountryEntry("Norwegen", "Norway", 65.25f, 15.11f, 58.02f, 80.48f, -9.10f, 33.63f, 2),
         CountryEntry("Nepal", "Nepal", 28.11f, 84.29f, 26.36f, 30.39f, 80.05f, 88.16f, 2),
         CountryEntry("Nauru", "Nauru", -0.52f, 166.94f, -0.55f, -0.49f, 166.91f, 166.96f, 4),
-        CountryEntry("Neuseeland", "New Zealand", -43.65f, 170.78f, -52.57f, -8.55f, -176.85f, 178.54f, 1),
+        CountryEntry("Neuseeland", "New Zealand", -43.65f, 170.78f, -47.50f, -34.00f, 166.00f, 179.00f, 1),
         CountryEntry("Oman", "Oman", 21.13f, 55.83f, 16.65f, 26.36f, 51.98f, 59.84f, 3),
         CountryEntry("Pakistan", "Pakistan", 30.17f, 69.78f, 23.75f, 37.04f, 60.84f, 77.05f, 1),
         CountryEntry("Panama", "Panama", 8.50f, -80.18f, 7.22f, 9.60f, -83.03f, -77.20f, 3),

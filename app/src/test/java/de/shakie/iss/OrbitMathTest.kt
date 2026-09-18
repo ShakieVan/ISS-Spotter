@@ -11,6 +11,75 @@ class OrbitMathTest {
     private val line2 = "2 25544  51.6307 206.4210 0004838 147.2470 212.8820 15.49143506585961"
 
     @Test
+    fun testBrazilCameraGeometry() {
+        val latIss = Math.toRadians(-26.95).toFloat()
+        val lonIss = Math.toRadians(-42.57).toFloat()
+        val rIss = 10.66f
+        val issPos = floatArrayOf(
+            rIss * cos(latIss) * cos(lonIss),
+            rIss * sin(latIss),
+            -rIss * cos(latIss) * sin(lonIss)
+        )
+
+        val controller = de.shakie.iss.graphics.OrbitCameraController()
+        val pose = controller.computeCameraPose(issPos, floatArrayOf(0f, 10f, 0f))
+        val eye = floatArrayOf(pose[0], pose[1], pose[2])
+        val target = floatArrayOf(pose[3], pose[4], pose[5])
+        val up = floatArrayOf(pose[6], pose[7], pose[8])
+
+        val fwd = floatArrayOf(target[0] - eye[0], target[1] - eye[1], target[2] - eye[2])
+        val fwdLen = sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2])
+        val fNorm = floatArrayOf(fwd[0]/fwdLen, fwd[1]/fwdLen, fwd[2]/fwdLen)
+
+        // Camera Right = cross(fNorm, up)
+        val right = floatArrayOf(
+            fNorm[1] * up[2] - fNorm[2] * up[1],
+            fNorm[2] * up[0] - fNorm[0] * up[2],
+            fNorm[0] * up[1] - fNorm[1] * up[0]
+        )
+
+        // Brazil center: -14 lat, -51 lon
+        val rEarth = 10.0f
+        val latBr = Math.toRadians(-14.0).toFloat()
+        val lonBr = Math.toRadians(-51.0).toFloat()
+        val brazilPos = floatArrayOf(
+            rEarth * cos(latBr) * cos(lonBr),
+            rEarth * sin(latBr),
+            -rEarth * cos(latBr) * sin(lonBr)
+        )
+
+        // Rio de Janeiro: -22.9 lat, -43.2 lon
+        val latRio = Math.toRadians(-22.9).toFloat()
+        val lonRio = Math.toRadians(-43.2).toFloat()
+        val rioPos = floatArrayOf(
+            rEarth * cos(latRio) * cos(lonRio),
+            rEarth * sin(latRio),
+            -rEarth * cos(latRio) * sin(lonRio)
+        )
+
+        val dBr = floatArrayOf(brazilPos[0] - eye[0], brazilPos[1] - eye[1], brazilPos[2] - eye[2])
+        val screenXBr = dBr[0] * right[0] + dBr[1] * right[1] + dBr[2] * right[2]
+        val screenYBr = dBr[0] * up[0] + dBr[1] * up[1] + dBr[2] * up[2]
+
+        val dRio = floatArrayOf(rioPos[0] - eye[0], rioPos[1] - eye[1], rioPos[2] - eye[2])
+        val screenXRio = dRio[0] * right[0] + dRio[1] * right[1] + dRio[2] * right[2]
+        val screenYRio = dRio[0] * up[0] + dRio[1] * up[1] + dRio[2] * up[2]
+
+        println("=== GEOMETRY CHECK (CORRECTED) ===")
+        println("ISS pos: [${issPos[0]}, ${issPos[1]}, ${issPos[2]}]")
+        println("Camera Eye: [${eye[0]}, ${eye[1]}, ${eye[2]}]")
+        println("Camera Up: [${up[0]}, ${up[1]}, ${up[2]}]")
+        println("Camera Right: [${right[0]}, ${right[1]}, ${right[2]}]")
+        println("Brazil Screen X: $screenXBr, Screen Y: $screenYBr")
+        println("Rio Screen X: $screenXRio, Screen Y: $screenYRio")
+
+        // When looking North at the Earth from the South Atlantic (ISS southeast of Brazil):
+        // Brazil and Rio MUST appear to the LEFT (West, negative Screen X) of the ISS!
+        assertTrue("Brazil must be on the left (West): $screenXBr", screenXBr < 0.0f)
+        assertTrue("Rio must be on the left (West): $screenXRio", screenXRio < 0.0f)
+    }
+
+    @Test
     fun testTleParsing() {
         val tle = Sgp4Propagator.parseTle(line1, line2)
         assertEquals(25544, tle.satNumber)

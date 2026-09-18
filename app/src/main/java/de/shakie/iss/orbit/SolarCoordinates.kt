@@ -49,7 +49,7 @@ object SolarCoordinates {
 
         val vx = (cos(latRad) * cos(lonRad)).toFloat()
         val vy = sin(latRad).toFloat()
-        val vz = (cos(latRad) * sin(lonRad)).toFloat()
+        val vz = (-cos(latRad) * sin(lonRad)).toFloat()
 
         return SunPosition(
             latitude = sunLat,

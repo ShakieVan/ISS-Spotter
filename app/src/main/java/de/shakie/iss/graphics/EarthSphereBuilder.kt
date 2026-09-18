@@ -55,10 +55,11 @@ object EarthSphereBuilder {
                 // In equirectangular maps: u=0 is -180 deg, u=0.5 is Prime Meridian (0 deg), u=1 is +180 deg
                 val phi = (u - 0.5f) * 2.0f * Math.PI.toFloat()
 
-                // Coordinates in Filament world: Y is up (North Pole), X is Prime Meridian (phi=0), Z is East (phi=+PI/2)
+                // Coordinates in Filament world: Y is up (North Pole), X is Prime Meridian (phi=0)
+                // In right-handed OpenGL/Filament space looking at Greenwich with North UP, East is -Z and West is +Z
                 val nx = sinTheta * cos(phi)
                 val ny = cosTheta
-                val nz = sinTheta * sin(phi)
+                val nz = -sinTheta * sin(phi)
 
                 val x = radius * nx
                 val y = radius * ny
@@ -90,15 +91,15 @@ object EarthSphereBuilder {
                 val first = i * (lonSegments + 1) + j
                 val second = first + lonSegments + 1
 
-                // First triangle (CCW viewed from outside)
+                // First triangle (CCW viewed from outside with right-handed Z)
                 indexBufferData.put(first)
-                indexBufferData.put(first + 1)
                 indexBufferData.put(second)
+                indexBufferData.put(first + 1)
 
-                // Second triangle (CCW viewed from outside)
+                // Second triangle (CCW viewed from outside with right-handed Z)
                 indexBufferData.put(second)
-                indexBufferData.put(first + 1)
                 indexBufferData.put(second + 1)
+                indexBufferData.put(first + 1)
             }
         }
 

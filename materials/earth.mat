@@ -27,7 +27,7 @@ fragment {
         float phi = (uv.x - 0.5) * 6.28318530718;
         float theta = (1.0 - uv.y) * 3.14159265359;
         float sinTheta = sin(theta);
-        float3 normal = float3(sinTheta * cos(phi), cos(theta), sinTheta * sin(phi));
+        float3 normal = float3(sinTheta * cos(phi), cos(theta), -sinTheta * sin(phi));
         float3 eyeDir = normalize(getWorldViewVector());
         float3 sunDir = normalize(materialParams.sunDirection);
 
@@ -68,15 +68,12 @@ fragment {
         float gapSuppression = smoothstep(0.002, 0.030, datelineDist);
         float filteredCloud = (rawCloud > 0.88) ? mix(rawCloud * 0.45, rawCloud, gapSuppression) : rawCloud;
 
-        // Correct Polar coordinates (uv.y=1 is North Pole, uv.y=0.5 is Equator, uv.y=0 is South Pole):
-        // Only fade very high latitudes (beyond 70° N / 65° S) to avoid sensor noise while preserving Canada/Scandinavia clouds
-        float northPoleDist = clamp((uv.y - 0.5) * 2.0, 0.0, 1.0); // 0 at equator, 1 at North Pole (+90°)
-        float southPoleDist = clamp((0.5 - uv.y) * 2.0, 0.0, 1.0); // 0 at equator, 1 at South Pole (-90°)
-        
-        // North pole: fade starting at 70° N (dist 0.78), 0 by 82° N (dist 0.91)
-        float northMask = 1.0 - smoothstep(0.78, 0.92, northPoleDist);
-        // South pole: fade starting at 64° S (dist 0.71), 0 by 76° S (dist 0.84)
-        float southMask = 1.0 - smoothstep(0.71, 0.85, southPoleDist);
+        // Polar masking: cleanly fade out satellite clouds south and north of continents
+        // Southern fade: 1.0 down to -44° S, fades to 0.0 by -52° S (eliminates Southern Ocean & Antarctica whiteout)
+        // Northern fade: 1.0 up to +68° N, fades to 0.0 by +78° N (preserves Canada/Europe, eliminates Arctic whiteout)
+        float latDeg = (uv.y - 0.5) * 180.0;
+        float northMask = 1.0 - smoothstep(68.0, 78.0, latDeg);
+        float southMask = smoothstep(-52.0, -44.0, latDeg);
         float poleMask = northMask * southMask;
 
         // Clean cloud alpha curve: eliminates low-level ocean grey floor (<0.32) and caps at 0.84

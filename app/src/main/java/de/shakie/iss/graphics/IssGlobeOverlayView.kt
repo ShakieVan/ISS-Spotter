@@ -231,7 +231,7 @@ class IssGlobeOverlayView @JvmOverloads constructor(
 
             val x = earthRadius * cos(latRad) * cos(lonRad)
             val y = earthRadius * sin(latRad)
-            val z = earthRadius * cos(latRad) * sin(lonRad)
+            val z = -earthRadius * cos(latRad) * sin(lonRad)
 
             // Horizon curvature culling
             val nx = x / earthRadius
