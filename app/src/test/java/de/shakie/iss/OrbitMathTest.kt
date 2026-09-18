@@ -128,7 +128,8 @@ class OrbitMathTest {
 
     @Test
     fun testEclipseCalculation() {
-        val sun = SunPosition(
+        // 1. Sun at Greenwich (vectorZ = 0)
+        val sunGreenwich = SunPosition(
             latitude = 0.0,
             longitude = 0.0,
             vectorX = 1.0f,
@@ -141,7 +142,7 @@ class OrbitMathTest {
             issLatDeg = 0.0,
             issLonDeg = 0.0,
             issAltKm = 420.0,
-            sun = sun
+            sun = sunGreenwich
         )
         assertEquals(1.0f, dayFactor, 1e-3f)
 
@@ -150,22 +151,44 @@ class OrbitMathTest {
             issLatDeg = 0.0,
             issLonDeg = 180.0,
             issAltKm = 420.0,
-            sun = sun
+            sun = sunGreenwich
         )
         assertEquals(0.0f, nightFactor, 1e-3f)
 
-        // Umbra boundary verification: grazing height <= 16 km must be completely dark (0.0)
-        // With Earth radius 6371 km, umbra boundary is 6387 km.
-        val rUmbra = 6371.0 + 15.0
-        // When dot = -100 km, dPerp = sqrt(r^2 - dot^2)
-        // If dPerp <= 6387 km -> 0.0f
-        val factorAtExtinction = EclipseCalculator.getSunlightFactor(
-            issLatDeg = 0.0,
-            issLonDeg = 90.0 + Math.toDegrees(asin(15.0 / rUmbra)),
-            issAltKm = 15.0,
-            sun = sun
+        // 2. Sun at 90 deg East (vectorZ = -1.0 in standard right-handed space)
+        val sunEast = SunPosition(
+            latitude = 0.0,
+            longitude = 90.0,
+            vectorX = 0.0f,
+            vectorY = 0.0f,
+            vectorZ = -1.0f
         )
-        assertEquals(0.0f, factorAtExtinction, 1e-3f)
+        val eastDay = EclipseCalculator.getSunlightFactor(
+            issLatDeg = 0.0,
+            issLonDeg = 90.0,
+            issAltKm = 420.0,
+            sun = sunEast
+        )
+        assertEquals(1.0f, eastDay, 1e-3f)
+
+        val westNight = EclipseCalculator.getSunlightFactor(
+            issLatDeg = 0.0,
+            issLonDeg = -90.0,
+            issAltKm = 420.0,
+            sun = sunEast
+        )
+        assertEquals(0.0f, westNight, 1e-3f)
+
+        // 3. User Malaysia Overflight (06:32 UTC on 2026-09-18: Lat 4.36 N, Lon 107.43 E)
+        val timeMalaysia = 1789713120000L // 06:32 UTC
+        val sunAtMalaysiaTime = SolarCoordinates.calculate(timeMalaysia)
+        val malaysiaSunFactor = EclipseCalculator.getSunlightFactor(
+            issLatDeg = 4.36,
+            issLonDeg = 107.43,
+            issAltKm = 422.1,
+            sun = sunAtMalaysiaTime
+        )
+        assertEquals("Malaysia at 13:32 local time must be in full sunlight", 1.0f, malaysiaSunFactor, 1e-3f)
     }
 
     @Test

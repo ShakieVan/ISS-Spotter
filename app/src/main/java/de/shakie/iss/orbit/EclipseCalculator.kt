@@ -24,10 +24,10 @@ object EclipseCalculator {
         val latRad = Math.toRadians(issLatDeg)
         val lonRad = Math.toRadians(issLonDeg)
 
-        // ISS position vector in ECEF
+        // ISS position vector in ECEF (matching Filament world frame: +Y=North, +X=Greenwich, -Z=East, +Z=West)
         val px = r * cos(latRad) * cos(lonRad)
         val py = r * sin(latRad)
-        val pz = r * cos(latRad) * sin(lonRad)
+        val pz = -r * cos(latRad) * sin(lonRad)
 
         // Dot product with sun unit vector
         val dot = px * sun.vectorX + py * sun.vectorY + pz * sun.vectorZ
