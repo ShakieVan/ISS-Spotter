@@ -8,12 +8,13 @@ import kotlin.math.*
 object AtmosphereBuilder {
 
     /**
-     * Builds an atmospheric outer sphere shell mesh at radius 10.22f
-     * (the Earth radius is 10.0f, giving a physically proportional 140km atmospheric envelope).
+     * Builds an atmospheric bounding sphere shell mesh at radius 25.0f.
+     * The camera in LEO (R ~ 10.6f) is safely inside this bounding volume,
+     * completely eliminating near-plane clipping and polygon tessellation artifacts.
      */
     fun buildAtmosphereShell(
         engine: Engine,
-        radius: Float = 10.22f,
+        radius: Float = 25.0f,
         latSegments: Int = 48,
         lonSegments: Int = 96
     ): EarthMesh {
@@ -50,19 +51,20 @@ object AtmosphereBuilder {
             }
         }
 
+        // Inside-facing triangles (camera is inside the bounding sphere)
         for (i in 0 until latSegments) {
             for (j in 0 until lonSegments) {
                 val first = i * (lonSegments + 1) + j
                 val second = first + lonSegments + 1
 
-                // CCW viewed from outside
+                // Clockwise from outside = CCW viewed from inside
                 indexBufferData.put(first)
-                indexBufferData.put(first + 1)
                 indexBufferData.put(second)
+                indexBufferData.put(first + 1)
 
                 indexBufferData.put(second)
-                indexBufferData.put(first + 1)
                 indexBufferData.put(second + 1)
+                indexBufferData.put(first + 1)
             }
         }
 

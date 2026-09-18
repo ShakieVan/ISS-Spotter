@@ -1,10 +1,9 @@
 material {
-    name : AtmosphereShell,
+    name : VolumetricAtmosphere,
     shadingModel : unlit,
     blending : add,
-    culling : back,
+    culling : none,
     depthWrite : false,
-    requires : [ uv0 ],
     parameters : [
         { type : float3, name : sunDirection },
         { type : float3, name : cameraPosition }
@@ -15,29 +14,17 @@ fragment {
     void material(inout MaterialInputs material) {
         prepareMaterial(material);
 
-        float2 uv = getUV0();
-
-        // 1. Exact analytic sphere normal and position of this fragment on the atmosphere shell (R = 10.22)
-        float theta = (1.0 - uv.y) * 3.141592653589793;
-        float phi = (uv.x - 0.5) * 6.283185307179586;
-        float sinTheta = sin(theta);
-        float cosTheta = cos(theta);
-        float3 N_sphere = float3(
-            sinTheta * cos(phi),
-            cosTheta,
-            -sinTheta * sin(phi)
-        );
-
-        float RA = 10.22;
-        float RE = 10.00;
-        float3 P = N_sphere * RA;
-
-        // 2. Camera position in world space and normalized ray direction
+        // 1. Perspective View Ray from Camera into the scene
         float3 C = materialParams.cameraPosition;
-        float3 V = normalize(P - C);
+        float3 V = -normalize(getWorldViewVector());
         float3 sunDir = normalize(materialParams.sunDirection);
 
-        // 3. Distance of closest approach of ray (C + t*V) to Earth center (0,0,0)
+        float RE = 10.00; // Earth surface radius
+        float RA = 10.22; // Outer atmosphere radius (140 km)
+
+        // 2. Ray-Sphere Intersection with Earth (RE) and Atmosphere (RA)
+        // Ray equation: P(t) = C + t * V
+        // Closest approach to origin (0, 0, 0):
         float tClosest = -dot(C, V);
         if (tClosest <= 0.0) {
             material.baseColor = float4(0.0);
@@ -48,37 +35,66 @@ fragment {
         float d2 = dot(Pclosest, Pclosest);
         float d = sqrt(d2);
 
-        // If the ray hits the solid Earth body (d < RE) or misses atmosphere (d >= RA):
-        if (d < RE || d >= RA) {
+        // Skip rays deep inside solid Earth (d < 9.85) or missing atmosphere (d >= RA)
+        // Allowing 9.85 <= d < 10.00 ensures seamless anti-aliasing under the Earth mesh edge
+        if (d < 9.85 || d >= RA) {
             material.baseColor = float4(0.0);
             return;
         }
 
-        // Ray passes through atmospheric limb above solid Earth: 10.0 <= d < 10.22
-        float h = (d - RE) / (RA - RE); // 0.0 at surface, 1.0 at outer rim
-        float pathLength = 2.0 * sqrt(max(RA * RA - d2, 0.0));
-        // Exponential Rayleigh density profile
-        float scatter = exp(-h * 4.2) * (1.0 - smoothstep(0.75, 1.0, h)) * pathLength * 0.45;
+        // 3. Volumetric Raymarching through atmospheric limb
+        // Ray enters atmosphere shell at t_in and exits at t_out:
+        float halfChordA = sqrt(max(RA * RA - d2, 0.0));
+        float t_in = max(tClosest - halfChordA, 0.0);
+        float t_out = tClosest + halfChordA;
+        float stepSize = (t_out - t_in) / 10.0;
 
-        // Illumination at the closest approach limb point
-        float3 N_atmo = normalize(Pclosest);
-        float sunDot = dot(N_atmo, sunDir);
+        // Rayleigh scattering wavelength constants (standard Earth atmosphere: 700nm, 530nm, 440nm)
+        float3 betaR = float3(0.18, 0.52, 1.00) * 1.8;
 
-        // Rayleigh scattering blue on day side
-        float3 rayleighBlue = float3(0.18, 0.58, 1.00);
+        // Rayleigh phase function: P(cos_theta) = 3/(16*pi) * (1 + cos^2(theta))
+        float cosThetaSun = dot(V, sunDir);
+        float phaseR = 0.75 * (1.0 + cosThetaSun * cosThetaSun);
 
-        // Sunset / Twilight spectrum
-        float sunsetBand = smoothstep(-0.18, 0.02, sunDot) * (1.0 - smoothstep(0.02, 0.22, sunDot));
-        float sunsetGrad = clamp((sunDot + 0.16) / 0.24, 0.0, 1.0);
-        float3 sunsetColor = mix(float3(0.96, 0.22, 0.06), float3(1.00, 0.65, 0.18), sunsetGrad);
+        // Sunset / Sunrise reddening
+        float3 sunsetColor = float3(1.00, 0.45, 0.12);
 
-        // Night side airglow
-        float3 nightAirglow = float3(0.015, 0.045, 0.080) * 0.35;
+        float3 totalScatter = float3(0.0);
 
-        float3 litColor = mix(rayleighBlue, sunsetColor, sunsetBand * 0.92);
-        float3 finalLimbColor = mix(nightAirglow, litColor, smoothstep(-0.20, 0.08, sunDot));
+        // 10-step numerical integration along the view ray
+        for (int i = 0; i < 10; i++) {
+            float t = t_in + (float(i) + 0.5) * stepSize;
+            float3 samplePos = C + V * t;
+            float rSample = length(samplePos);
 
-        float3 finalGlow = finalLimbColor * scatter * 2.2;
-        material.baseColor = float4(finalGlow, 1.0);
+            if (rSample >= RE && rSample <= RA) {
+                float h = (rSample - RE) / (RA - RE); // 0.0 to 1.0
+                // Exponential barometric density profile (scale height H ~ 8km -> h*4.5)
+                float density = exp(-h * 4.5);
+
+                // Sun illumination at sample point:
+                // Check if Earth occludes Sun from this sample point (shadow cone)
+                float3 sampleNormal = samplePos / rSample;
+                float sunDotSample = dot(sampleNormal, sunDir);
+
+                float inShadow = 0.0;
+                if (sunDotSample < 0.0) {
+                    float3 sunPerp = samplePos - dot(samplePos, sunDir) * sunDir;
+                    if (dot(sunPerp, sunPerp) < RE * RE) {
+                        inShadow = 1.0;
+                    }
+                }
+
+                if (inShadow < 0.5) {
+                    float sunElevation = clamp((sunDotSample + 0.08) / 0.25, 0.0, 1.0);
+                    float3 sunLightAtSample = mix(sunsetColor * 0.85, float3(1.0), sunElevation);
+
+                    totalScatter += density * sunLightAtSample * stepSize;
+                }
+            }
+        }
+
+        float3 limbColor = totalScatter * betaR * phaseR * 0.65;
+        material.baseColor = float4(limbColor, 1.0);
     }
 }
