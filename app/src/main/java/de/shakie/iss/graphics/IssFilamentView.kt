@@ -584,7 +584,7 @@ class IssFilamentView @JvmOverloads constructor(
                 if (isDragging && event.pointerCount == 1) {
                     val dx = event.x - lastTouchX
                     val dy = event.y - lastTouchY
-                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg + dx * 0.16f).mod(360f)
+                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg - dx * 0.16f).mod(360f)
                     cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.16f).coerceIn(-85f, 85f)
                     lastTouchX = event.x
                     lastTouchY = event.y
