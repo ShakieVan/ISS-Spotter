@@ -364,7 +364,7 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         w: Float, h: Float
     ) {
         val sDir = sunDir ?: return
-        if (!inSunlight) return
+        // Ray-sphere occultation below determines whether the Sun is visible from the camera's viewpoint
 
         // 1. Physical gradual occultation by Earth sphere
         val sunDist = 74.0f

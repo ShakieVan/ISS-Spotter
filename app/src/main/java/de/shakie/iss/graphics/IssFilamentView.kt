@@ -43,6 +43,11 @@ class IssFilamentView @JvmOverloads constructor(
     private var earthMaterial: Material? = null
     private var earthMaterialInstance: MaterialInstance? = null
 
+    // Atmosphere Outer Shell
+    private var atmosphereMesh: EarthMesh? = null
+    private var atmosphereMaterial: Material? = null
+    private var atmosphereMaterialInstance: MaterialInstance? = null
+
     // Milky Way & Celestial Sky
     private var milkyWayMesh: EarthMesh? = null
     private var milkyWayMaterial: Material? = null
@@ -122,6 +127,7 @@ class IssFilamentView @JvmOverloads constructor(
         initLighting()
         initStarfield()
         initEarth()
+        initAtmosphere()
         initIssModel()
     }
 
@@ -310,6 +316,37 @@ class IssFilamentView @JvmOverloads constructor(
         }
     }
 
+    private fun initAtmosphere() {
+        try {
+            val mesh = EarthSphereBuilder.build(engine, radius = 10.22f, latSegments = 64, lonSegments = 128)
+            atmosphereMesh = mesh
+
+            val bytes = context.assets.open("materials/atmosphere.filamat").use { it.readBytes() }
+            val buffer = ByteBuffer.allocateDirect(bytes.size).apply { put(bytes); flip() }
+            val mat = Material.Builder().payload(buffer, buffer.remaining()).build(engine)
+            atmosphereMaterial = mat
+
+            val instance = mat.createInstance()
+            atmosphereMaterialInstance = instance
+            instance.setParameter("sunDirection", 1.0f, 0.0f, 0.0f)
+
+            RenderableManager.Builder(1)
+                .boundingBox(Box(0f, 0f, 0f, 12f, 12f, 12f))
+                .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, mesh.vertexBuffer, mesh.indexBuffer)
+                .material(0, instance)
+                .castShadows(false)
+                .receiveShadows(false)
+                .priority(6)
+                .culling(false)
+                .build(engine, mesh.entity)
+
+            scene.addEntity(mesh.entity)
+            Log.i("IssFilamentView", "Initialized Atmosphere 3D Shell Mesh")
+        } catch (e: Exception) {
+            Log.e("IssFilamentView", "Error initializing Atmosphere: ${e.message}", e)
+        }
+    }
+
     private fun initIssModel() {
         try {
             val provider = UbershaderProvider(engine)
@@ -422,6 +459,7 @@ class IssFilamentView @JvmOverloads constructor(
             setParameter("sunDirection", sun.vectorX, sun.vectorY, sun.vectorZ)
             setParameter("time", elapsedSec)
         }
+        atmosphereMaterialInstance?.setParameter("sunDirection", sun.vectorX, sun.vectorY, sun.vectorZ)
         sunBillboardInstance?.setParameter("time", elapsedSec)
 
         // 2. Update Sun Directional Light & Shadow Intensity
@@ -682,6 +720,8 @@ class IssFilamentView @JvmOverloads constructor(
 
         earthMesh?.destroy(engine)
         earthMaterial?.let { engine.destroyMaterial(it) }
+        atmosphereMesh?.destroy(engine)
+        atmosphereMaterial?.let { engine.destroyMaterial(it) }
         dayTexture?.let { engine.destroyTexture(it) }
         nightTexture?.let { engine.destroyTexture(it) }
         cloudTexture?.let { engine.destroyTexture(it) }

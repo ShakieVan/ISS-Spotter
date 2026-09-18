@@ -21,36 +21,25 @@ fragment {
         prepareMaterial(material);
 
         float2 uv = getUV0();
-        // Spherical surface normal calculated analytically from equirectangular UV:
-        // u=0 is -180 deg, u=0.5 is Prime Meridian (0 deg, +X), u=1 is +180 deg
-        // v=0 is South Pole (-Y), v=1 is North Pole (+Y)
-        float phi = (uv.x - 0.5) * 6.28318530718;
-        float theta = (1.0 - uv.y) * 3.14159265359;
-        float sinTheta = sin(theta);
-        float3 normal = float3(sinTheta * cos(phi), cos(theta), -sinTheta * sin(phi));
+        // 1. Precise continuous surface normal from world position (sphere centered at origin)
+        float3 normal = normalize(getWorldPosition());
         float3 eyeDir = normalize(getWorldViewVector());
         float3 sunDir = normalize(materialParams.sunDirection);
 
-        float NdotV = clamp(dot(normal, eyeDir), 0.0, 1.0);
         float sunDot = dot(normal, sunDir);
 
         // =========================================================
         // 1. DAY / TWILIGHT / NIGHT TRANSITION & SUNSET SPECTRUM
         // =========================================================
-        // Ground daylight factor: smooth transition across the terminator [-0.06, 0.12]
-        float dayFactor = smoothstep(-0.06, 0.12, sunDot);
+        // Ground daylight factor: smooth physical transition across terminator [-0.03, 0.08]
+        float dayFactor = smoothstep(-0.03, 0.08, sunDot);
 
-        // Physical Lambertian cosine factor for direct sunlight (monotonically dims to zero at sunset)
-        float sunLambert = clamp(sunDot * 1.3, 0.0, 1.0);
+        // Physical Lambertian cosine factor for direct sunlight (strictly monotonic, 0 at sunset)
+        float sunLambert = clamp(sunDot * 1.25, 0.0, 1.0);
 
-        // Sunset / Sunrise twilight factor: subtle warmth right along the terminator line
-        float sunsetBand = smoothstep(-0.04, 0.06, sunDot) * (1.0 - smoothstep(0.06, 0.22, sunDot));
-
-        // Atmospheric sunset color gradient: warm golden amber to deep twilight crimson
+        // Sunset / Sunrise atmospheric reddening (Rayleigh extinction along path through atmosphere)
         float3 sunsetColor = float3(1.00, 0.65, 0.28);
-
-        // Direct sunlight color: subtle golden hour reddening near terminator, crisp white daylight at noon
-        float3 directSunColor = mix(sunsetColor, float3(1.0, 0.98, 0.95), smoothstep(0.03, 0.20, sunDot));
+        float3 directSunColor = mix(sunsetColor, float3(1.0, 0.98, 0.95), smoothstep(0.02, 0.20, sunDot));
 
         // =========================================================
         // 2. TEXTURE SAMPLES & SURFACE LIGHTING
@@ -86,12 +75,13 @@ fragment {
         float shadowAlpha = smoothstep(0.32, 0.85, rawShadow) * 0.65 * poleMask * materialParams.showClouds;
         float shadowFactor = 1.0 - shadowAlpha * 0.55 * max(sunDot, 0.0);
 
-        // Specular sun glint on ocean: strictly confined to deep ocean, high exponent, no terrestrial sheen
-        float oceanMask = clamp((daySample.b - max(daySample.r, daySample.g) * 0.90) * 5.0, 0.0, 1.0);
-        float3 reflected = reflect(-eyeDir, normal);
-        float specAngle = max(dot(reflected, sunDir), 0.0);
-        float sunGlint = pow(specAngle, 256.0) * smoothstep(0.4, 0.9, oceanMask) * smoothstep(0.04, 0.25, sunDot) * (1.0 - cloudAlpha);
-        float3 glintColor = directSunColor * sunGlint * 0.80;
+        // Specular sun glint on ocean: strictly confined to open ocean, strictly daytime, physically bounded
+        float isOcean = clamp((daySample.b - max(daySample.r, daySample.g) - 0.02) * 10.0, 0.0, 1.0);
+        float sunAboveHorizon = smoothstep(0.01, 0.10, sunDot);
+        float3 reflected = reflect(-sunDir, normal);
+        float specAngle = max(dot(reflected, eyeDir), 0.0);
+        float sunGlint = pow(specAngle, 128.0) * isOcean * sunAboveHorizon * (1.0 - cloudAlpha);
+        float3 glintColor = directSunColor * sunGlint * 0.85;
 
         // Night city lights occlusion by clouds:
         float cloudLightBlock = smoothstep(0.15, 0.85, cloudAlpha) * 0.85;
@@ -100,20 +90,19 @@ fragment {
         float3 cityUnderGlow = nightSample.rgb * 0.35 * cloudAlpha;
 
         // Day surface lighting: physical Lambert falloff ensures daylight smoothly and monotonically fades to dusk
-        float surfaceDayLight = mix(0.05, 1.0, sunLambert);
+        float surfaceDayLight = mix(0.04, 1.0, sunLambert);
         float3 surfaceDay = daySample.rgb * shadowFactor * directSunColor * surfaceDayLight + glintColor;
 
-        // Night terrain ambient starlight/airglow
-        float3 nightAmbient = daySample.rgb * 0.025 * float3(0.35, 0.50, 0.75);
+        // Night terrain ambient starlight
+        float3 nightAmbient = daySample.rgb * 0.018 * float3(0.35, 0.50, 0.75);
         float3 surfaceNight = nightLights + nightAmbient;
         float3 surfaceColor = mix(surfaceNight, surfaceDay, dayFactor);
 
         // =========================================================
         // 3. REALISTIC 3D CLOUDS (DAY, SUNSET & NIGHT)
         // =========================================================
-        // Cloud tops catch the sun down to sunDot = -0.08
-        float cloudSunDot = sunDot + 0.05;
-        float cloudSunFactor = smoothstep(-0.10, 0.12, cloudSunDot);
+        float cloudSunDot = sunDot + 0.03;
+        float cloudSunFactor = smoothstep(-0.04, 0.08, cloudSunDot);
 
         float stormHeight = smoothstep(0.4, 0.9, cloudAlpha) * materialParams.cloudRelief;
         float cloudDiffuse = clamp(sunLambert * 1.1 + stormHeight * 0.20, 0.0, 1.0);
@@ -122,11 +111,12 @@ fragment {
         float3 cloudDayColor = mix(float3(0.55, 0.65, 0.78), float3(0.98, 0.99, 1.0), cloudDiffuse) * (0.15 + 0.85 * cloudDiffuse);
 
         // Sunset clouds: subtle amber warmth, dimmed in line with lower solar angle
-        float3 cloudSunsetColor = sunsetColor * 0.70;
+        float sunsetBand = smoothstep(-0.02, 0.05, sunDot) * (1.0 - smoothstep(0.05, 0.18, sunDot));
+        float3 cloudSunsetColor = sunsetColor * 0.75;
         float3 cloudLitColor = mix(cloudDayColor, cloudSunsetColor, sunsetBand * 0.80);
 
         // Night side clouds in Earth shadow
-        float3 cloudNightColor = float3(0.012, 0.016, 0.024) + cityUnderGlow;
+        float3 cloudNightColor = float3(0.010, 0.014, 0.020) + cityUnderGlow;
 
         // Final cloud color blended smoothly across terminator into night
         float3 cloudColor = mix(cloudNightColor, cloudLitColor, cloudSunFactor);
@@ -134,36 +124,8 @@ fragment {
         // Apply clouds over Earth surface
         surfaceColor = mix(surfaceColor, cloudColor, cloudAlpha);
 
-        // =========================================================
-        // 4. ATMOSPHERE: VIBRANT HORIZON LIMB (RAYLEIGH SCATTERING)
-        // =========================================================
-        // Rim angle: 1.0 at planetary limb / horizon, 0.0 at center disk
-        float rim = 1.0 - NdotV;
-
-        // Present, glowing Rayleigh atmosphere along the grazing horizon limb
-        float limbIntensity = pow(rim, 5.0) * 0.95;
-
-        // Daytime radiant electric blue Rayleigh scattering
-        float3 rayleighBlue = float3(0.22, 0.62, 1.00);
-
-        // Sunset rim color along the terminator horizon: warm fiery amber
-        float3 limbSunsetColor = float3(1.00, 0.48, 0.14);
-
-        // Sunlit limb: electric blue on daylight side, fiery sunset at terminator
-        float3 litLimbColor = mix(rayleighBlue, limbSunsetColor, sunsetBand);
-
-        // Night side airglow: subtle deep navy/cyan edge along the dark limb
-        float3 nightAirglow = float3(0.015, 0.035, 0.060);
-
-        // Atmosphere illumination fades on night side of planet
-        float limbSun = smoothstep(-0.16, 0.12, sunDot);
-        float3 activeLimbColor = mix(nightAirglow, litLimbColor, limbSun);
-
-        // Final atmosphere glow strictly at the horizon limb
-        float3 atmosphereGlow = activeLimbColor * limbIntensity;
-
-        // Composite Color: crystal-clear surface & clouds, no artificial ground sheen, vibrant atmospheric horizon
-        float3 finalColor = surfaceColor + atmosphereGlow;
+        // Final surface color: crystal-clear terrain and clouds, no artificial surface glow
+        float3 finalColor = surfaceColor;
 
         // =========================================================
         // 5. INVERTED HIGH-CONTRAST BORDERS & COUNTRY LABELS

@@ -14,10 +14,9 @@ fragment {
     void material(inout MaterialInputs material) {
         prepareMaterial(material);
 
+        float3 C = getWorldCameraPosition();
         float3 P = getWorldPosition();
-        float3 W = getWorldViewVector();
-        float3 C = P + W; // Camera position in world space
-        float3 V = -normalize(W); // Ray direction from camera
+        float3 V = normalize(P - C); // Ray direction from camera
         float3 sunDir = normalize(materialParams.sunDirection);
 
         float RE = 10.0;
