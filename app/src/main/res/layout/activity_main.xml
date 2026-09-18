@@ -37,6 +37,7 @@
             android:gravity="end"
             android:orientation="vertical">
 
+
             <androidx.appcompat.widget.AppCompatButton
                 android:id="@+id/btnResetOrbitView"
                 android:layout_width="wrap_content"
@@ -53,46 +54,115 @@
                 android:textSize="12sp"
                 android:visibility="gone" />
 
-            <androidx.appcompat.widget.AppCompatButton
-                android:id="@+id/btnToggleMapSource"
+            <!-- Aufklappmenü Panel für Ebenen und Diagnose -->
+            <LinearLayout
+                android:id="@+id/layoutViewOptionsMenu"
                 android:layout_width="wrap_content"
-                android:layout_height="38dp"
+                android:layout_height="wrap_content"
                 android:layout_marginBottom="8dp"
-                android:minHeight="0dp"
-                android:minWidth="0dp"
-                android:background="@drawable/bg_hud_button"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:text="🛰️ Karte: Blue Marble"
-                android:textAllCaps="false"
-                android:textColor="@color/cyan_accent"
-                android:textSize="12sp" />
+                android:background="@drawable/bg_telemetry_card"
+                android:gravity="end"
+                android:orientation="vertical"
+                android:padding="8dp"
+                android:visibility="gone">
 
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:layout_marginEnd="4dp"
+                    android:fontFamily="monospace"
+                    android:text="EBENEN &amp; DIAGNOSE"
+                    android:textColor="#8FAEC8"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnToggleMapSource"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginBottom="6dp"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:background="@drawable/bg_hud_button"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="🌍 Karte: Blue Marble"
+                    android:textAllCaps="false"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnToggleClouds"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginBottom="6dp"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:background="@drawable/bg_hud_button"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="☁️ Wolken: AN"
+                    android:textAllCaps="false"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnToggleBorders"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginBottom="6dp"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:background="@drawable/bg_hud_button"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="🌐 Grenzen: AN"
+                    android:textAllCaps="false"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnToggleGroundMarker"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginBottom="6dp"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:background="@drawable/bg_hud_button"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="🎯 Bodenpunkt: AUS"
+                    android:textAllCaps="false"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnToggleNormalAnalysis"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:background="@drawable/bg_hud_button"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="🔬 Normalenanalyse: AUS"
+                    android:textAllCaps="false"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- Aufklappmenü Schalter-Button -->
             <androidx.appcompat.widget.AppCompatButton
-                android:id="@+id/btnToggleClouds"
+                android:id="@+id/btnToggleViewOptions"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
-                android:layout_marginBottom="8dp"
                 android:minHeight="0dp"
                 android:minWidth="0dp"
                 android:background="@drawable/bg_hud_button"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:text="☁️ Wolken: AN"
-                android:textAllCaps="false"
-                android:textColor="@color/cyan_accent"
-                android:textSize="12sp" />
-
-            <androidx.appcompat.widget.AppCompatButton
-                android:id="@+id/btnToggleBorders"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:minHeight="0dp"
-                android:minWidth="0dp"
-                android:background="@drawable/bg_hud_button"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:text="🌐 Grenzen: AN"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="🎛️ Optionen ▴"
                 android:textAllCaps="false"
                 android:textColor="@color/cyan_accent"
                 android:textSize="12sp" />

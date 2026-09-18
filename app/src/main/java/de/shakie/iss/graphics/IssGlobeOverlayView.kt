@@ -83,6 +83,39 @@ class IssGlobeOverlayView @JvmOverloads constructor(
     private val flareStreakPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val flareGhostPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    var diagnosticMarkersVisible: Boolean = false
+    var issSubPointLatLon: Pair<Double, Double>? = null
+
+    data class DiagnosticPoint(
+        val name: String,
+        val latDeg: Double,
+        val lonDeg: Double,
+        val colorHex: String
+    )
+
+    private val diagnosticPoints = listOf(
+        DiagnosticPoint("NORDPOL (+90°, 0°)", 90.0, 0.0, "#FF3366"),
+        DiagnosticPoint("SÜDPOL (-90°, 0°)", -90.0, 0.0, "#FF3366"),
+        DiagnosticPoint("ÄQUATOR / GREENWICH (0°, 0°)", 0.0, 0.0, "#00FFCC"),
+        DiagnosticPoint("ÄQUATOR / 90° OST (0°, +90°)", 0.0, 90.0, "#FFCC00"),
+        DiagnosticPoint("ÄQUATOR / 90° WEST (0°, -90°)", 0.0, -90.0, "#FF9900"),
+        DiagnosticPoint("BERLIN (52.5° N, 13.4° O)", 52.52, 13.405, "#33CCFF"),
+        DiagnosticPoint("RIO DE JANEIRO (-22.9° S, 43.2° W)", -22.9, -43.2, "#33CCFF")
+    )
+
+    private val diagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+    }
+    private val diagFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val diagTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+        letterSpacing = 0.04f
+    }
+
     data class ConstellationLabel(
         val name: String,
         val x: Float,
@@ -200,6 +233,11 @@ class IssGlobeOverlayView @JvmOverloads constructor(
 
         // 3. Constellation Names (always in view when looking at the sky, crisp and upright)
         drawConstellationLabels(canvas, eyeX, eyeY, eyeZ, w, h)
+
+        // 4. Diagnostic Coordinate Markers (Pole, Equator, ISS sub-satellite point)
+        if (diagnosticMarkersVisible) {
+            drawDiagnosticMarkers(canvas, eyeX, eyeY, eyeZ, w, h)
+        }
 
         if (!bordersVisible) return
 
@@ -350,6 +388,114 @@ class IssGlobeOverlayView @JvmOverloads constructor(
             val formattedText = "✦  ${label.name}"
             canvas.drawText(formattedText, sx, sy, constellationOutlinePaint)
             canvas.drawText(formattedText, sx, sy, constellationTextPaint)
+        }
+    }
+
+    private fun drawDiagnosticMarkers(
+        canvas: Canvas,
+        eyeX: Float, eyeY: Float, eyeZ: Float,
+        w: Float, h: Float
+    ) {
+        val earthRadius = 10.0f
+        val textSize = (11f * density).coerceIn(22f, 34f)
+        diagTextPaint.textSize = textSize
+
+        // 1. Draw pre-defined geographic reference markers
+        for (pt in diagnosticPoints) {
+            val latRad = Math.toRadians(pt.latDeg)
+            val lonRad = Math.toRadians(pt.lonDeg)
+            val x = (earthRadius * cos(latRad) * cos(lonRad)).toFloat()
+            val y = (earthRadius * sin(latRad)).toFloat()
+            val z = (-earthRadius * cos(latRad) * sin(lonRad)).toFloat()
+
+            val nx = x / earthRadius
+            val ny = y / earthRadius
+            val nz = z / earthRadius
+
+            val toEyeX = eyeX - x
+            val toEyeY = eyeY - y
+            val toEyeZ = eyeZ - z
+            val toEyeLen = sqrt(toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ).coerceAtLeast(0.001f)
+            val dotFacing = (nx * toEyeX + ny * toEyeY + nz * toEyeZ) / toEyeLen
+            if (dotFacing < 0.01f) continue
+
+            worldPos[0] = x; worldPos[1] = y; worldPos[2] = z; worldPos[3] = 1.0f
+            Matrix.multiplyMV(clipPos, 0, vpMatrix, 0, worldPos, 0)
+            if (clipPos[3] <= 0.1f) continue
+
+            val ndcX = clipPos[0] / clipPos[3]
+            val ndcY = clipPos[1] / clipPos[3]
+            if (ndcX < -0.96f || ndcX > 0.96f || ndcY < -0.96f || ndcY > 0.96f) continue
+
+            val sx = (ndcX * 0.5f + 0.5f) * w
+            val sy = (1.0f - (ndcY * 0.5f + 0.5f)) * h
+
+            val color = Color.parseColor(pt.colorHex)
+            diagPaint.color = color
+            diagFillPaint.color = color
+            diagTextPaint.color = color
+
+            // Crosshair / target marker
+            val mSize = 8f * density
+            canvas.drawCircle(sx, sy, mSize, diagPaint)
+            canvas.drawCircle(sx, sy, 2.5f * density, diagFillPaint)
+            canvas.drawLine(sx - mSize * 1.5f, sy, sx + mSize * 1.5f, sy, diagPaint)
+            canvas.drawLine(sx, sy - mSize * 1.5f, sx, sy + mSize * 1.5f, diagPaint)
+
+            // Label
+            outlinePaint.textSize = textSize
+            outlinePaint.strokeWidth = 3.2f * density
+            canvas.drawText(pt.name, sx, sy - mSize * 1.6f, outlinePaint)
+            canvas.drawText(pt.name, sx, sy - mSize * 1.6f, diagTextPaint)
+        }
+
+        // 2. Draw ISS Sub-Satellite Ground Point
+        issSubPointLatLon?.let { (lat, lon) ->
+            val latRad = Math.toRadians(lat)
+            val lonRad = Math.toRadians(lon)
+            val x = (earthRadius * cos(latRad) * cos(lonRad)).toFloat()
+            val y = (earthRadius * sin(latRad)).toFloat()
+            val z = (-earthRadius * cos(latRad) * sin(lonRad)).toFloat()
+
+            val nx = x / earthRadius
+            val ny = y / earthRadius
+            val nz = z / earthRadius
+
+            val toEyeX = eyeX - x
+            val toEyeY = eyeY - y
+            val toEyeZ = eyeZ - z
+            val toEyeLen = sqrt(toEyeX * toEyeX + toEyeY * toEyeY + toEyeZ * toEyeZ).coerceAtLeast(0.001f)
+            val dotFacing = (nx * toEyeX + ny * toEyeY + nz * toEyeZ) / toEyeLen
+            if (dotFacing >= 0.01f) {
+                worldPos[0] = x; worldPos[1] = y; worldPos[2] = z; worldPos[3] = 1.0f
+                Matrix.multiplyMV(clipPos, 0, vpMatrix, 0, worldPos, 0)
+                if (clipPos[3] > 0.1f) {
+                    val ndcX = clipPos[0] / clipPos[3]
+                    val ndcY = clipPos[1] / clipPos[3]
+                    if (ndcX in -0.96f..0.96f && ndcY in -0.96f..0.96f) {
+                        val sx = (ndcX * 0.5f + 0.5f) * w
+                        val sy = (1.0f - (ndcY * 0.5f + 0.5f)) * h
+
+                        val issColor = Color.parseColor("#FFFF00") // Bright yellow
+                        diagPaint.color = issColor
+                        diagFillPaint.color = issColor
+                        diagTextPaint.color = issColor
+
+                        val mSize = 10f * density
+                        canvas.drawCircle(sx, sy, mSize, diagPaint)
+                        canvas.drawCircle(sx, sy, 3f * density, diagFillPaint)
+                        canvas.drawLine(sx - mSize * 1.8f, sy, sx + mSize * 1.8f, sy, diagPaint)
+                        canvas.drawLine(sx, sy - mSize * 1.8f, sx, sy + mSize * 1.8f, diagPaint)
+
+                        val label = String.format("🛰️ ISS BODENPUNKT (%.2f°, %.2f°)", lat, lon)
+                        outlinePaint.textSize = textSize
+                        outlinePaint.strokeWidth = 3.5f * density
+                        val textY = if (sy > h - 180f * density) sy - mSize * 2.2f else sy + mSize * 2.2f
+                        canvas.drawText(label, sx, textY, outlinePaint)
+                        canvas.drawText(label, sx, textY, diagTextPaint)
+                    }
+                }
+            }
         }
     }
 

@@ -23,6 +23,18 @@ object EarthSphereBuilder {
     /**
      * Builds a Filament sphere mesh representing the Earth with position,
      * tangent quaternion, and equirectangular UV mapping.
+     *
+     * Global World Coordinate Convention:
+     *   +Y = Geographic North (+90° Lat)
+     *   -Y = Geographic South (-90° Lat)
+     *   +X = Equator at Prime Meridian (0° Lat, 0° Lon)
+     *   -Z = Equator at 90° East (0° Lat, +90° Lon)
+     *   +Z = Equator at 90° West (0° Lat, -90° Lon)
+     *
+     * Conversion from geographic (lat, lon) in radians:
+     *   x = r * cos(lat) * cos(lon)
+     *   y = r * sin(lat)
+     *   z = -r * cos(lat) * sin(lon)
      */
     fun build(
         engine: Engine,
@@ -48,7 +60,11 @@ object EarthSphereBuilder {
             val cosTheta = cos(theta)
 
             for (j in 0..lonSegments) {
-                // UVs: u from 0 to 1 (wrapping longitude), v from 0 (North Pole) to 1 (South Pole)
+                // UVs in Mesh:
+                //   u from 0 to 1 (wrapping longitude: 0=-180°, 0.5=0°, 1=+180°)
+                //   v from 1.0 (North Pole, i=0) down to 0.0 (South Pole, i=latSegments)
+                // Note: Filament standard material flipUV=true flips v in the shader:
+                //   shaderUv.y = 1.0 - meshUv.y -> North Pole has shader uv.y=0.0, South Pole has shader uv.y=1.0.
                 val u = j.toFloat() / lonSegments
                 val v = 1.0f - (i.toFloat() / latSegments)
 

@@ -2,6 +2,7 @@ material {
     name : EarthAtmosphere,
     shadingModel : unlit,
     blending : opaque,
+    flipUV : true,
     requires : [ uv0 ],
     parameters : [
         { type : sampler2d, name : dayMap },
@@ -12,18 +13,49 @@ material {
         { type : float, name : time },
         { type : float, name : cloudRelief },
         { type : float, name : showBorders },
-        { type : float, name : showClouds }
+        { type : float, name : showClouds },
+        { type : float, name : isReferenceMode },
+        { type : float, name : debugVisualMode },
+        { type : float, name : cloudEncoding },
+        { type : float, name : cloudNoDataMode }
     ]
 }
 
 fragment {
+    // Dedicated cloud opacity and validity evaluation (Patch C)
+    // Decouples explicit channel encoding (Grayscale vs. Alpha) from NoData validity.
+    float sampleCloudOpacity(float2 coords) {
+        float4 cSample = texture(materialParams_cloudMap, coords);
+
+        // 1. NoData evaluation (isolated from cloud opacity)
+        if (materialParams.cloudNoDataMode > 0.5 && materialParams.cloudNoDataMode < 1.5) {
+            // NODATA_ALPHA_ZERO: unobserved / missing observation
+            if (cSample.a < 0.001) {
+                return 0.0;
+            }
+        } else if (materialParams.cloudNoDataMode >= 1.5) {
+            // NODATA_SENTINEL_ZERO: RGB=(0,0,0) unobserved swath boundary
+            if (dot(cSample.rgb, cSample.rgb) < 0.0001) {
+                return 0.0;
+            }
+        }
+
+        // 2. Explicit cloud encoding without heuristics:
+        // 0.0 = GRAYSCALE_MASK: brightness from defined grayscale/red channel (JPEG)
+        // 1.0 = CLOUD_ALPHA_MASK: cloud opacity directly from alpha, strictly [0.0, 1.0]
+        float raw = (materialParams.cloudEncoding > 0.5) ? cSample.a : cSample.r;
+        return clamp(raw, 0.0, 1.0);
+    }
+
     void material(inout MaterialInputs material) {
         prepareMaterial(material);
 
         float2 uv = getUV0();
-        // 1. Precise continuous surface normal of the Earth sphere (centered at origin)
-        // Calculated directly from UV mapping so it is 100% invariant to camera movements or view shifts
-        float theta = (1.0 - uv.y) * 3.141592653589793;
+
+        // 1. Continuous surface normal reconstructed from UV mapping.
+        // Mesh: North Pole has v=1.0, Equator has v=0.5, South Pole has v=0.0.
+        // Filament flipUV=true: Shader has uv.y=0.0 at North Pole, uv.y=1.0 at South Pole.
+        float theta = uv.y * 3.141592653589793;
         float phi = (uv.x - 0.5) * 6.283185307179586;
         float sinTheta = sin(theta);
         float cosTheta = cos(theta);
@@ -32,10 +64,54 @@ fragment {
             cosTheta,
             -sinTheta * sin(phi)
         );
+        float latDeg = (0.5 - uv.y) * 180.0;
+
         float3 eyeDir = normalize(getWorldViewVector());
         float3 sunDir = normalize(materialParams.sunDirection);
-
         float sunDot = dot(normal, sunDir);
+
+        // =========================================================
+        // SHADER DIAGNOSTIC OUTPUTS (PATCH A)
+        // =========================================================
+        // 1.0: Normal as RGB (North=+Y -> Green, South=-Y -> Purple, East=-Z -> Yellow-Green, West=+Z -> Cyan)
+        if (materialParams.debugVisualMode > 0.5 && materialParams.debugVisualMode < 1.5) {
+            material.baseColor = float4(normal * 0.5 + 0.5, 1.0);
+            return;
+        }
+        // 2.0: sunDot as grayscale: 1.0=noon, 0.5=terminator, 0.0=midnight
+        if (materialParams.debugVisualMode >= 1.5 && materialParams.debugVisualMode < 2.5) {
+            float sVal = clamp(sunDot * 0.5 + 0.5, 0.0, 1.0);
+            material.baseColor = float4(float3(sVal), 1.0);
+            return;
+        }
+        // 3.0: Shader UV coordinates as RG (U -> Red, V -> Green)
+        if (materialParams.debugVisualMode >= 2.5) {
+            material.baseColor = float4(uv.x, uv.y, 0.0, 1.0);
+            return;
+        }
+
+        float4 daySample = texture(materialParams_dayMap, uv);
+        float4 borderSample = texture(materialParams_borderMap, uv);
+
+        // =========================================================
+        // A. SATELLITE / RAW MAP REFERENCE VIEW
+        // =========================================================
+        // In reference mode, the texture is displayed raw and color-faithful
+        // without artificial solar darkening, night lights, or simulated lighting.
+        if (materialParams.isReferenceMode > 0.5) {
+            float3 refColor = daySample.rgb;
+            if (materialParams.showBorders > 0.01 && borderSample.a > 0.01) {
+                float bgLum = dot(refColor, float3(0.299, 0.587, 0.114));
+                float3 invertedColor = float3(1.0) - refColor;
+                float3 highContrast = (bgLum > 0.42) 
+                    ? float3(0.08, 0.10, 0.14) 
+                    : float3(0.92, 0.96, 1.00);
+                float3 borderCol = mix(invertedColor, highContrast, 0.75);
+                refColor = mix(refColor, borderCol, borderSample.a * materialParams.showBorders);
+            }
+            material.baseColor = float4(refColor, 1.0);
+            return;
+        }
 
         // =========================================================
         // 1. DAY / TWILIGHT / NIGHT TRANSITION & SUNSET SPECTRUM
@@ -53,35 +129,14 @@ fragment {
         // =========================================================
         // 2. TEXTURE SAMPLES & SURFACE LIGHTING
         // =========================================================
-        float4 daySample = texture(materialParams_dayMap, uv);
         float4 nightSample = texture(materialParams_nightMap, uv);
-        float4 borderSample = texture(materialParams_borderMap, uv);
-        float4 cloudSample = texture(materialParams_cloudMap, uv);
 
-        // Natural cloud density curve with toggleable showClouds parameter
-        float rawCloud = (cloudSample.a < 0.99 && cloudSample.a > 0.01) ? cloudSample.a : cloudSample.r;
+        // Patch C: Clean, linear cloud opacity evaluation
+        float cloudAlpha = sampleCloudOpacity(uv) * materialParams.showClouds;
 
-        // Edge seam suppression for satellite coverage gaps on the Pacific dateline (u=0 / u=1)
-        float datelineDist = min(uv.x, 1.0 - uv.x);
-        float gapSuppression = smoothstep(0.002, 0.030, datelineDist);
-        float filteredCloud = (rawCloud > 0.88) ? mix(rawCloud * 0.45, rawCloud, gapSuppression) : rawCloud;
-
-        // Polar masking: cleanly fade out satellite clouds south and north of continents
-        // Southern fade: 1.0 down to -44° S, fades to 0.0 by -52° S (eliminates Southern Ocean & Antarctica whiteout)
-        // Northern fade: 1.0 up to +68° N, fades to 0.0 by +78° N (preserves Canada/Europe, eliminates Arctic whiteout)
-        float latDeg = (uv.y - 0.5) * 180.0;
-        float northMask = 1.0 - smoothstep(68.0, 78.0, latDeg);
-        float southMask = smoothstep(-52.0, -44.0, latDeg);
-        float poleMask = northMask * southMask;
-
-        // Clean cloud alpha curve: eliminates low-level ocean grey floor (<0.32) and caps at 0.84
-        float cloudAlpha = smoothstep(0.32, 0.85, filteredCloud) * 0.84 * poleMask * materialParams.showClouds;
-
-        // Cloud shadow on Earth surface (only in daylight, only if clouds visible)
+        // Cloud shadow on Earth surface (strictly using the exact same evaluation function)
         float2 shadowUv = uv - float2(sunDir.x, -sunDir.y) * 0.0035;
-        float4 shadowSample = texture(materialParams_cloudMap, shadowUv);
-        float rawShadow = (shadowSample.a < 0.99 && shadowSample.a > 0.01) ? shadowSample.a : shadowSample.r;
-        float shadowAlpha = smoothstep(0.32, 0.85, rawShadow) * 0.65 * poleMask * materialParams.showClouds;
+        float shadowAlpha = sampleCloudOpacity(shadowUv) * materialParams.showClouds;
         float shadowFactor = 1.0 - shadowAlpha * 0.55 * max(sunDot, 0.0);
 
         // Specular sun glint on ocean: strictly confined to open ocean, strictly daytime, physically bounded

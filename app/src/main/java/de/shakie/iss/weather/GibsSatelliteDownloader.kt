@@ -85,8 +85,8 @@ class GibsSatelliteDownloader(private val context: Context) {
         }
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
 
-        // For a full, 100% complete global mosaic without orbital scan gaps,
-        // the previous UTC day is the most reliable complete composite.
+        // Daily global composite for the previous UTC day. Note: Polar winter regions receive no sunlight,
+        // and orbital swaths may have sensor limits, but the composite provides the most complete daylight coverage available.
         cal.add(Calendar.DAY_OF_MONTH, -1)
         val targetDateStr = dateFormat.format(cal.time)
 

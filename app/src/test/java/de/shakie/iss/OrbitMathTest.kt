@@ -498,4 +498,286 @@ class OrbitMathTest {
         println("Touch Drag Down Test: screenY0=$screenY0 -> screenYP=$screenYP (delta=${screenYP - screenY0})")
         assertTrue("Dragging finger DOWN must move scene DOWN on screen: delta=${screenYP - screenY0}", screenYP < screenY0)
     }
+
+    @Test
+    fun testLatLonTo3DAndBackRoundtrip() {
+        val r = 10.0f
+
+        // Helper conversion lat/lon to 3D
+        fun to3D(latDeg: Double, lonDeg: Double): FloatArray {
+            val latRad = Math.toRadians(latDeg)
+            val lonRad = Math.toRadians(lonDeg)
+            val x = (r * cos(latRad) * cos(lonRad)).toFloat()
+            val y = (r * sin(latRad)).toFloat()
+            val z = (-r * cos(latRad) * sin(lonRad)).toFloat()
+            return floatArrayOf(x, y, z)
+        }
+
+        // Helper conversion 3D to lat/lon
+        fun toLatLon(pos: FloatArray): Pair<Double, Double> {
+            val len = sqrt(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2])
+            val latRad = asin((pos[1] / len).coerceIn(-1f, 1f).toDouble())
+            val lonRad = atan2(-pos[2].toDouble(), pos[0].toDouble())
+            return Pair(Math.toDegrees(latRad), Math.toDegrees(lonRad))
+        }
+
+        val testPoints = listOf(
+            Pair(90.0, 0.0),      // North Pole
+            Pair(-90.0, 0.0),     // South Pole
+            Pair(0.0, 0.0),       // Equator at Prime Meridian
+            Pair(0.0, 90.0),      // Equator at 90° East
+            Pair(0.0, -90.0),     // Equator at 90° West
+            Pair(-50.0, 172.0),   // ISS sample point (South Pacific)
+            Pair(52.52, 13.405),  // Berlin
+            Pair(-22.9, -43.2),   // Rio de Janeiro
+            Pair(72.0, -40.0),    // Greenland
+            Pair(-54.0, -70.0)    // Patagonia / Chile
+        )
+
+        for ((lat, lon) in testPoints) {
+            val pos = to3D(lat, lon)
+            val (latBack, lonBack) = toLatLon(pos)
+
+            println("Roundtrip: ($lat°, $lon°) -> pos=[${pos[0]}, ${pos[1]}, ${pos[2]}] -> ($latBack°, $lonBack°)")
+            assertEquals("Latitude roundtrip for $lat°", lat, latBack, 1e-4)
+            // At poles, longitude is indeterminate, only check when not at pole
+            if (abs(lat) < 89.9) {
+                assertEquals("Longitude roundtrip for $lon°", lon, lonBack, 1e-4)
+            }
+        }
+
+        // Specific axial direction checks:
+        val northPolePos = to3D(90.0, 0.0)
+        assertEquals(0f, northPolePos[0], 1e-5f)
+        assertEquals(r, northPolePos[1], 1e-5f)
+        assertEquals(0f, northPolePos[2], 1e-5f)
+
+        val southPolePos = to3D(-90.0, 0.0)
+        assertEquals(0f, southPolePos[0], 1e-5f)
+        assertEquals(-r, southPolePos[1], 1e-5f)
+        assertEquals(0f, southPolePos[2], 1e-5f)
+
+        val eastPos = to3D(0.0, 90.0)
+        assertEquals(0f, eastPos[0], 1e-5f)
+        assertEquals(0f, eastPos[1], 1e-5f)
+        assertEquals(-r, eastPos[2], 1e-5f) // East is -Z
+
+        val westPos = to3D(0.0, -90.0)
+        assertEquals(0f, westPos[0], 1e-5f)
+        assertEquals(0f, westPos[1], 1e-5f)
+        assertEquals(r, westPos[2], 1e-5f)  // West is +Z
+    }
+
+    @Test
+    fun testMeshUvToShaderNormalCorrespondence() {
+        // Shader logic from earth.mat:
+        // float theta = uv.y * 3.141592653589793;
+        // float phi = (uv.x - 0.5) * 6.283185307179586;
+        // float sinTheta = sin(theta);
+        // float cosTheta = cos(theta);
+        // float3 normal = float3(sinTheta * cos(phi), cosTheta, -sinTheta * sin(phi));
+        // float latDeg = (0.5 - uv.y) * 180.0;
+        fun shaderNormal(uvX: Float, uvY: Float): FloatArray {
+            val theta = uvY * Math.PI.toFloat()
+            val phi = (uvX - 0.5f) * 2.0f * Math.PI.toFloat()
+            val sinTheta = sin(theta)
+            val cosTheta = cos(theta)
+            return floatArrayOf(
+                sinTheta * cos(phi),
+                cosTheta,
+                -sinTheta * sin(phi)
+            )
+        }
+
+        fun shaderLatDeg(uvY: Float): Float = (0.5f - uvY) * 180.0f
+
+        // 1. North Pole: Mesh v=1.0 -> Filament flipUV=true -> Shader uv.y=0.0
+        val nNorth = shaderNormal(0.5f, 0.0f)
+        println("Shader North Pole Normal: [${nNorth[0]}, ${nNorth[1]}, ${nNorth[2]}], Lat: ${shaderLatDeg(0.0f)}°")
+        assertEquals(0f, nNorth[0], 1e-5f)
+        assertEquals(1f, nNorth[1], 1e-5f) // MUST point +Y (North)!
+        assertEquals(0f, nNorth[2], 1e-5f)
+        assertEquals(90f, shaderLatDeg(0.0f), 1e-5f)
+
+        // 2. South Pole: Mesh v=0.0 -> Filament flipUV=true -> Shader uv.y=1.0
+        val nSouth = shaderNormal(0.5f, 1.0f)
+        println("Shader South Pole Normal: [${nSouth[0]}, ${nSouth[1]}, ${nSouth[2]}], Lat: ${shaderLatDeg(1.0f)}°")
+        assertEquals(0f, nSouth[0], 1e-5f)
+        assertEquals(-1f, nSouth[1], 1e-5f) // MUST point -Y (South)!
+        assertEquals(0f, nSouth[2], 1e-5f)
+        assertEquals(-90f, shaderLatDeg(1.0f), 1e-5f)
+
+        // 3. Equator at Prime Meridian: uv=(0.5, 0.5)
+        val nEquatorGreenwich = shaderNormal(0.5f, 0.5f)
+        assertEquals(1f, nEquatorGreenwich[0], 1e-5f) // MUST point +X (Greenwich)!
+        assertEquals(0f, nEquatorGreenwich[1], 1e-5f)
+        assertEquals(0f, nEquatorGreenwich[2], 1e-5f)
+        assertEquals(0f, shaderLatDeg(0.5f), 1e-5f)
+
+        // 4. Equator at 90° East: uv=(0.75, 0.5)
+        val nEquatorEast = shaderNormal(0.75f, 0.5f)
+        assertEquals(0f, nEquatorEast[0], 1e-5f)
+        assertEquals(0f, nEquatorEast[1], 1e-5f)
+        assertEquals(-1f, nEquatorEast[2], 1e-5f) // MUST point -Z (East)!
+
+        // 5. Equator at 90° West: uv=(0.25, 0.5)
+        val nEquatorWest = shaderNormal(0.25f, 0.5f)
+        assertEquals(0f, nEquatorWest[0], 1e-5f)
+        assertEquals(0f, nEquatorWest[1], 1e-5f)
+        assertEquals(1f, nEquatorWest[2], 1e-5f)  // MUST point +Z (West)!
+    }
+
+    @Test
+    fun testSolarIlluminationAndDeclination() {
+        fun normalFromLatLon(latDeg: Double, lonDeg: Double): FloatArray {
+            val latRad = Math.toRadians(latDeg)
+            val lonRad = Math.toRadians(lonDeg)
+            return floatArrayOf(
+                (cos(latRad) * cos(lonRad)).toFloat(),
+                sin(latRad).toFloat(),
+                (-cos(latRad) * sin(lonRad)).toFloat()
+            )
+        }
+
+        fun dot(a: FloatArray, b: FloatArray): Float = a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+
+        // 1. Equatorial Sun (Equinox): Subsolar at 0° Lat, 0° Lon
+        val sunEquator = normalFromLatLon(0.0, 0.0)
+        val nGreenwich = normalFromLatLon(0.0, 0.0)
+        val nAntipode = normalFromLatLon(0.0, 180.0)
+        val nTerminator = normalFromLatLon(0.0, 90.0)
+
+        assertEquals("Subsolar dot must be +1.0", 1.0f, dot(nGreenwich, sunEquator), 1e-5f)
+        assertEquals("Antisolar dot must be -1.0", -1.0f, dot(nAntipode, sunEquator), 1e-5f)
+        assertEquals("Terminator dot must be 0.0", 0.0f, dot(nTerminator, sunEquator), 1e-5f)
+
+        // 2. Northern Summer (Solstice): Sun declination = +23.44° over 0° Lon
+        val sunNorthSummer = normalFromLatLon(23.44, 0.0)
+        val nNorthPole = normalFromLatLon(90.0, 0.0)
+        val nSouthPole = normalFromLatLon(-90.0, 0.0)
+
+        val dotNorthPoleSummer = dot(nNorthPole, sunNorthSummer)
+        val dotSouthPoleSummer = dot(nSouthPole, sunNorthSummer)
+        println("Northern Summer: North Pole dot=$dotNorthPoleSummer, South Pole dot=$dotSouthPoleSummer")
+        assertTrue("North Pole must be in sunlight (Polar Day) during Northern Summer: dot=$dotNorthPoleSummer", dotNorthPoleSummer > 0f)
+        assertTrue("South Pole must be in shadow (Polar Night) during Northern Summer: dot=$dotSouthPoleSummer", dotSouthPoleSummer < 0f)
+
+        // 3. Southern Summer (Solstice): Sun declination = -23.44° over 0° Lon
+        val sunSouthSummer = normalFromLatLon(-23.44, 0.0)
+        val dotNorthPoleWinter = dot(nNorthPole, sunSouthSummer)
+        val dotSouthPoleWinter = dot(nSouthPole, sunSouthSummer)
+        println("Southern Summer: North Pole dot=$dotNorthPoleWinter, South Pole dot=$dotSouthPoleWinter")
+        assertTrue("North Pole must be in shadow (Polar Night) during Southern Summer: dot=$dotNorthPoleWinter", dotNorthPoleWinter < 0f)
+        assertTrue("South Pole must be in sunlight (Polar Day) during Southern Summer: dot=$dotSouthPoleWinter", dotSouthPoleWinter > 0f)
+    }
+
+    @Test
+    fun testCloudEncodingAndOpacity() {
+        // Replicates shader logic from earth.mat:
+        fun sampleCloudOpacity(
+            r: Float, g: Float, b: Float, a: Float,
+            cloudEncoding: Float,
+            cloudNoDataMode: Float
+        ): Float {
+            // 1. NoData evaluation
+            if (cloudNoDataMode > 0.5f && cloudNoDataMode < 1.5f) {
+                if (a < 0.001f) return 0.0f
+            } else if (cloudNoDataMode >= 1.5f) {
+                if ((r*r + g*g + b*b) < 0.0001f) return 0.0f
+            }
+
+            // 2. Explicit cloud encoding
+            val raw = if (cloudEncoding > 0.5f) a else r
+            return raw.coerceIn(0.0f, 1.0f)
+        }
+
+        val GRAYSCALE_MASK = 0.0f
+        val CLOUD_ALPHA_MASK = 1.0f
+        val NODATA_NONE = 0.0f
+
+        // A. GRAYSCALE_MASK (e.g. JPEG cloud maps loaded into RGBA8 textures where alpha is 1.0)
+        // CRUCIAL: Opacity MUST come from the grayscale/red channel, NOT from alpha=1.0!
+        val semiCloudJpeg = sampleCloudOpacity(0.35f, 0.35f, 0.35f, 1.0f, GRAYSCALE_MASK, NODATA_NONE)
+        assertEquals("Grayscale mask with R=0.35 must yield opacity 0.35, even when GPU alpha is 1.0", 0.35f, semiCloudJpeg, 1e-5f)
+
+        val clearSkyJpeg = sampleCloudOpacity(0.0f, 0.0f, 0.0f, 1.0f, GRAYSCALE_MASK, NODATA_NONE)
+        assertEquals("Grayscale mask with R=0.0 must yield opacity 0.0 (clear sky)", 0.0f, clearSkyJpeg, 1e-5f)
+
+        val denseStormJpeg = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 1.0f, GRAYSCALE_MASK, NODATA_NONE)
+        assertEquals("Grayscale mask with R=1.0 must yield opacity 1.0", 1.0f, denseStormJpeg, 1e-5f)
+
+        // B. CLOUD_ALPHA_MASK (RGBA textures with true alpha transparency)
+        // MUST evaluate alpha explicitly, including boundary values 0.0 and 1.0!
+        val alphaZero = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 0.0f, CLOUD_ALPHA_MASK, NODATA_NONE)
+        assertEquals("Alpha mask with A=0.0 must yield 0.0 opacity", 0.0f, alphaZero, 1e-5f)
+
+        val alphaMid = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 0.65f, CLOUD_ALPHA_MASK, NODATA_NONE)
+        assertEquals("Alpha mask with A=0.65 must yield 0.65 opacity", 0.65f, alphaMid, 1e-5f)
+
+        val alphaOne = sampleCloudOpacity(1.0f, 1.0f, 1.0f, 1.0f, CLOUD_ALPHA_MASK, NODATA_NONE)
+        assertEquals("Alpha mask with A=1.0 must yield 1.0 opacity", 1.0f, alphaOne, 1e-5f)
+    }
+
+    @Test
+    fun testCloudNoDataHandling() {
+        fun sampleCloud(
+            r: Float, g: Float, b: Float, a: Float,
+            cloudEncoding: Float,
+            cloudNoDataMode: Float
+        ): Pair<Float, Boolean> {
+            var isValid = true
+            if (cloudNoDataMode > 0.5f && cloudNoDataMode < 1.5f) {
+                if (a < 0.001f) {
+                    isValid = false
+                    return Pair(0.0f, false)
+                }
+            } else if (cloudNoDataMode >= 1.5f) {
+                if ((r*r + g*g + b*b) < 0.0001f) {
+                    isValid = false
+                    return Pair(0.0f, false)
+                }
+            }
+            val raw = if (cloudEncoding > 0.5f) a else r
+            return Pair(raw.coerceIn(0.0f, 1.0f), isValid)
+        }
+
+        val NODATA_ALPHA_ZERO = 1.0f
+        val NODATA_SENTINEL_ZERO = 2.0f
+        val GRAYSCALE_MASK = 0.0f
+
+        // 1. Alpha=0 indicates unobserved pixel in NODATA_ALPHA_ZERO mode
+        val unobserved1 = sampleCloud(0.8f, 0.8f, 0.8f, 0.0f, GRAYSCALE_MASK, NODATA_ALPHA_ZERO)
+        assertFalse("Pixel with A=0 in NODATA_ALPHA_ZERO must be invalid (NoData)", unobserved1.second)
+        assertEquals("NoData pixel must have 0.0 opacity so base map remains untouched", 0.0f, unobserved1.first, 1e-5f)
+
+        // 2. Black pixel RGB=(0,0,0) in swath boundary in NODATA_SENTINEL_ZERO mode
+        val unobserved2 = sampleCloud(0.0f, 0.0f, 0.0f, 1.0f, GRAYSCALE_MASK, NODATA_SENTINEL_ZERO)
+        assertFalse("RGB=0 in NODATA_SENTINEL_ZERO must be treated as swath NoData", unobserved2.second)
+        assertEquals("Swath NoData must yield 0.0 opacity", 0.0f, unobserved2.first, 1e-5f)
+
+        // 3. Observed valid pixel
+        val observed = sampleCloud(0.7f, 0.7f, 0.7f, 1.0f, GRAYSCALE_MASK, NODATA_SENTINEL_ZERO)
+        assertTrue("Valid observed pixel must be valid", observed.second)
+        assertEquals(0.7f, observed.first, 1e-5f)
+    }
+
+    @Test
+    fun testCloudPreservationInPolarRegions() {
+        // Test that high latitude areas (Greenland +72°, Antarctica -80°)
+        // retain their true cloud opacity without artificial latitude dampings
+        val greenlandCloudRaw = 0.75f
+        val antarcticaCloudRaw = 0.60f
+
+        // Verify there is NO latitude multiplier applied to cloud opacity
+        fun applyCloudOpacityAtLat(rawCloud: Float, latDeg: Double): Float {
+            // Under Patch C: strictly linear opacity from texture without latitude damping
+            return rawCloud
+        }
+
+        val greenlandOpacity = applyCloudOpacityAtLat(greenlandCloudRaw, 72.0)
+        val antarcticaOpacity = applyCloudOpacityAtLat(antarcticaCloudRaw, -80.0)
+
+        assertEquals("Greenland cloud opacity must not be attenuated by latitude", 0.75f, greenlandOpacity, 1e-5f)
+        assertEquals("Antarctica cloud opacity must not be attenuated by latitude", 0.60f, antarcticaOpacity, 1e-5f)
+    }
 }

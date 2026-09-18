@@ -77,8 +77,29 @@ class IssFilamentView @JvmOverloads constructor(
     private var cloudTexture: Texture? = null
     private var borderTexture: Texture? = null
     private var satelliteTexture: Texture? = null
+    enum class CloudEncoding(val value: Float) {
+        GRAYSCALE_MASK(0.0f),
+        CLOUD_ALPHA_MASK(1.0f)
+    }
+
+    enum class CloudNoDataMode(val value: Float) {
+        NODATA_NONE(0.0f),
+        NODATA_ALPHA_ZERO(1.0f),
+        NODATA_SENTINEL_ZERO(2.0f)
+    }
+
     var isSatelliteMode: Boolean = false
         private set
+    var isReferenceMode: Boolean = false
+        private set
+    var currentCloudEncoding: CloudEncoding = CloudEncoding.GRAYSCALE_MASK
+        private set
+    var currentCloudNoDataMode: CloudNoDataMode = CloudNoDataMode.NODATA_NONE
+        private set
+
+    // Color grading & tone mapping
+    private var standardColorGrading: ColorGrading? = null
+    private var referenceColorGrading: ColorGrading? = null
 
     // ISS Model
     private var ubershaderProvider: UbershaderProvider? = null
@@ -117,6 +138,18 @@ class IssFilamentView @JvmOverloads constructor(
         options.enabled = true
         options.strength = 0.25f
         view.bloomOptions = options
+
+        val stdGrading = ColorGrading.Builder()
+            .toneMapping(ColorGrading.ToneMapping.ACES)
+            .build(engine)
+        standardColorGrading = stdGrading
+
+        val refGrading = ColorGrading.Builder()
+            .toneMapping(ColorGrading.ToneMapping.LINEAR)
+            .build(engine)
+        referenceColorGrading = refGrading
+
+        view.colorGrading = stdGrading
 
         // Ensure clear options and skybox are active to prevent trailing/smearing
         val clearOptions = Renderer.ClearOptions()
@@ -302,6 +335,10 @@ class IssFilamentView @JvmOverloads constructor(
             instance.setParameter("cloudRelief", cloudRelief)
             instance.setParameter("showBorders", showBorders)
             instance.setParameter("showClouds", showClouds)
+            instance.setParameter("isReferenceMode", 0.0f)
+            instance.setParameter("debugVisualMode", 0.0f)
+            instance.setParameter("cloudEncoding", currentCloudEncoding.value)
+            instance.setParameter("cloudNoDataMode", currentCloudNoDataMode.value)
 
             RenderableManager.Builder(1)
                 .boundingBox(Box(0f, 0f, 0f, 11f, 11f, 11f))
@@ -382,7 +419,11 @@ class IssFilamentView @JvmOverloads constructor(
         }
     }
 
-    fun updateLiveClouds(cloudFile: File) {
+    fun updateLiveClouds(
+        cloudFile: File,
+        encoding: CloudEncoding = CloudEncoding.GRAYSCALE_MASK,
+        noDataMode: CloudNoDataMode = CloudNoDataMode.NODATA_NONE
+    ) {
         try {
             if (!cloudFile.exists()) return
             val bitmap = BitmapFactory.decodeFile(cloudFile.absolutePath) ?: return
@@ -402,12 +443,24 @@ class IssFilamentView @JvmOverloads constructor(
                 TextureSampler.WrapMode.REPEAT
             )
             earthMaterialInstance?.setParameter("cloudMap", newTexture, sampler)
+            currentCloudEncoding = encoding
+            currentCloudNoDataMode = noDataMode
+            earthMaterialInstance?.setParameter("cloudEncoding", encoding.value)
+            earthMaterialInstance?.setParameter("cloudNoDataMode", noDataMode.value)
             cloudTexture = newTexture
             oldTexture?.let { engine.destroyTexture(it) }
-            Log.i("IssFilamentView", "Updated Filament cloud texture from ${cloudFile.name}")
+            Log.i("IssFilamentView", "Updated Filament cloud texture from ${cloudFile.name} (encoding=$encoding, noData=$noDataMode)")
         } catch (e: Exception) {
             Log.w("IssFilamentView", "Failed to update cloud texture: ${e.message}")
         }
+    }
+
+    fun setCloudDataSourceConfig(encoding: CloudEncoding, noDataMode: CloudNoDataMode = CloudNoDataMode.NODATA_NONE) {
+        currentCloudEncoding = encoding
+        currentCloudNoDataMode = noDataMode
+        earthMaterialInstance?.setParameter("cloudEncoding", encoding.value)
+        earthMaterialInstance?.setParameter("cloudNoDataMode", noDataMode.value)
+        Log.i("IssFilamentView", "Set cloud configuration: encoding=$encoding, noData=$noDataMode")
     }
 
     fun updateSatelliteTexture(satFile: File) {
@@ -467,6 +520,25 @@ class IssFilamentView @JvmOverloads constructor(
         }
     }
 
+    fun setReferenceMode(enabled: Boolean) {
+        isReferenceMode = enabled
+        earthMaterialInstance?.setParameter("isReferenceMode", if (enabled) 1.0f else 0.0f)
+        atmosphereMesh?.let { mesh ->
+            if (enabled) {
+                scene.removeEntity(mesh.entity)
+            } else {
+                scene.removeEntity(mesh.entity)
+                scene.addEntity(mesh.entity)
+            }
+        }
+        val bloomOpts = view.bloomOptions
+        bloomOpts.enabled = !enabled
+        view.bloomOptions = bloomOpts
+
+        view.colorGrading = if (enabled) referenceColorGrading else standardColorGrading
+        Log.i("IssFilamentView", "Switched Reference Mode: $enabled (bloom=${!enabled}, toneMapping=${if (enabled) "LINEAR" else "ACES"})")
+    }
+
     fun setSnapshot(snapshot: IssSnapshot) {
         currentSnapshot = snapshot
     }
@@ -479,6 +551,11 @@ class IssFilamentView @JvmOverloads constructor(
     fun setCloudVisibility(visible: Boolean) {
         showClouds = if (visible) 1.0f else 0.0f
         earthMaterialInstance?.setParameter("showClouds", showClouds)
+    }
+
+    fun setDebugVisualMode(mode: Int) {
+        earthMaterialInstance?.setParameter("debugVisualMode", mode.toFloat())
+        Log.i("IssFilamentView", "Switched debugVisualMode: $mode")
     }
 
     fun pauseRendering() {
@@ -805,6 +882,8 @@ class IssFilamentView @JvmOverloads constructor(
         constellationLinesMaterial?.let { engine.destroyMaterial(it) }
         skybox?.let { engine.destroySkybox(it) }
         indirectLight?.let { engine.destroyIndirectLight(it) }
+        standardColorGrading?.let { engine.destroyColorGrading(it) }
+        referenceColorGrading?.let { engine.destroyColorGrading(it) }
 
         issAsset?.let { assetLoader?.destroyAsset(it) }
         assetLoader?.destroy()

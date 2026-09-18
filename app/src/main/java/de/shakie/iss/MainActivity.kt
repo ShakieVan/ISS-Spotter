@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import de.shakie.iss.databinding.ActivityMainBinding
+import de.shakie.iss.graphics.IssFilamentView
 import de.shakie.iss.observer.ArCameraManager
 import de.shakie.iss.observer.DeviceOrientation
 import de.shakie.iss.observer.OrientationSensorHelper
@@ -29,6 +30,7 @@ import de.shakie.iss.weather.LiveCloudDownloader
 import de.shakie.iss.weather.SatelliteInfo
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.*
 
 class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
@@ -44,12 +46,14 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     private var currentOrientation = DeviceOrientation(0f, 0f, 0f, FloatArray(16))
     private var bordersVisible = true
     private var cloudsVisible = true
+    private var normalAnalysisEnabled = false
     private var isObserverMode = false
     private var locationListener: LocationListener? = null
 
     // Debug control for automated testing & angle inspection via ADB
     private var debugTimeOverride: Long? = null
     private var debugFreeze: Boolean = false
+    private var debugSunOverride: FloatArray? = null
 
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -58,7 +62,18 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 binding.filamentView.resetCameraView()
                 debugTimeOverride = null
                 debugFreeze = false
-                Log.i("MainActivity", "Debug: reset camera and time override")
+                debugSunOverride = null
+                binding.filamentView.setReferenceMode(false)
+                binding.globeOverlayView.diagnosticMarkersVisible = false
+                normalAnalysisEnabled = false
+                binding.filamentView.setDebugVisualMode(0)
+                binding.filamentView.setCloudDataSourceConfig(
+                    IssFilamentView.CloudEncoding.GRAYSCALE_MASK,
+                    IssFilamentView.CloudNoDataMode.NODATA_NONE
+                )
+                updateGroundMarkerButtonText()
+                updateNormalAnalysisButtonText()
+                Log.i("MainActivity", "Debug: reset camera, time, sun, reference mode, diagnostics, and clouds")
                 return
             }
             if (intent.hasExtra("yaw")) {
@@ -90,6 +105,47 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 val sat = intent.getBooleanExtra("satellite", false)
                 binding.filamentView.setMapMode(sat)
                 updateMapSourceButtonText()
+            }
+            if (intent.hasExtra("reference_mode")) {
+                val ref = intent.getBooleanExtra("reference_mode", false)
+                binding.filamentView.setReferenceMode(ref)
+                updateMapSourceButtonText()
+            }
+            if (intent.hasExtra("diagnostic_markers")) {
+                val diag = intent.getBooleanExtra("diagnostic_markers", false)
+                binding.globeOverlayView.diagnosticMarkersVisible = diag
+                binding.globeOverlayView.postInvalidateOnAnimation()
+                updateGroundMarkerButtonText()
+            }
+            if (intent.hasExtra("visual_mode")) {
+                val mode = intent.getIntExtra("visual_mode", 0)
+                normalAnalysisEnabled = (mode == 1)
+                binding.filamentView.setDebugVisualMode(mode)
+                updateNormalAnalysisButtonText()
+            }
+            if (intent.hasExtra("cloud_encoding")) {
+                val encVal = intent.getFloatExtra("cloud_encoding", 0f)
+                val enc = if (encVal > 0.5f) IssFilamentView.CloudEncoding.CLOUD_ALPHA_MASK else IssFilamentView.CloudEncoding.GRAYSCALE_MASK
+                binding.filamentView.setCloudDataSourceConfig(enc, binding.filamentView.currentCloudNoDataMode)
+            }
+            if (intent.hasExtra("cloud_nodata")) {
+                val ndVal = intent.getFloatExtra("cloud_nodata", 0f)
+                val nd = when {
+                    ndVal > 1.5f -> IssFilamentView.CloudNoDataMode.NODATA_SENTINEL_ZERO
+                    ndVal > 0.5f -> IssFilamentView.CloudNoDataMode.NODATA_ALPHA_ZERO
+                    else -> IssFilamentView.CloudNoDataMode.NODATA_NONE
+                }
+                binding.filamentView.setCloudDataSourceConfig(binding.filamentView.currentCloudEncoding, nd)
+            }
+            if (intent.hasExtra("sun_lat") && intent.hasExtra("sun_lon")) {
+                val sLat = intent.getFloatExtra("sun_lat", 0f)
+                val sLon = intent.getFloatExtra("sun_lon", 0f)
+                val latRad = Math.toRadians(sLat.toDouble()).toFloat()
+                val lonRad = Math.toRadians(sLon.toDouble()).toFloat()
+                val vx = (cos(latRad) * cos(lonRad))
+                val vy = sin(latRad)
+                val vz = (-cos(latRad) * sin(lonRad))
+                debugSunOverride = floatArrayOf(vx, vy, vz)
             }
             binding.filamentView.onCameraModified?.invoke(binding.filamentView.cameraController.isModified())
             Log.i("MainActivity", "Debug scene updated: yaw=${binding.filamentView.cameraController.yawOffsetDeg}, pitch=${binding.filamentView.cameraController.pitchOffsetDeg}, zoom=${binding.filamentView.cameraController.zoomFactor}, time=$debugTimeOverride, freeze=$debugFreeze")
@@ -160,11 +216,27 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             switchToObserverMode()
         }
 
-        // Toggle Map Source: Blue Marble vs NASA GIBS VIIRS Satellite
+        // Toggle Map Source: Blue Marble -> Satellit (Simulation) -> Satellit (Referenz Unlit) -> Blue Marble
         updateMapSourceButtonText()
         binding.btnToggleMapSource.setOnClickListener {
-            val nextMode = !binding.filamentView.isSatelliteMode
-            binding.filamentView.setMapMode(nextMode)
+            val isSat = binding.filamentView.isSatelliteMode
+            val isRef = binding.filamentView.isReferenceMode
+            when {
+                !isSat -> {
+                    // Switch from Blue Marble to Satellit (Simulation)
+                    binding.filamentView.setMapMode(true)
+                    binding.filamentView.setReferenceMode(false)
+                }
+                isSat && !isRef -> {
+                    // Switch from Satellit (Simulation) to Satellit (Referenz Unlit)
+                    binding.filamentView.setReferenceMode(true)
+                }
+                else -> {
+                    // Switch from Satellit (Referenz) back to Blue Marble
+                    binding.filamentView.setReferenceMode(false)
+                    binding.filamentView.setMapMode(false)
+                }
+            }
             updateMapSourceButtonText()
         }
 
@@ -176,12 +248,44 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             updateCloudButtonText()
         }
 
-        // Toggle country borders & names
+        // Toggle country borders & names (Short-click: toggle borders, Long-click: toggle diagnostic markers)
         binding.btnToggleBorders.setOnClickListener {
             bordersVisible = !bordersVisible
             binding.filamentView.setBorderVisibility(bordersVisible)
             binding.globeOverlayView.setLabelsVisible(bordersVisible)
             binding.btnToggleBorders.text = if (bordersVisible) "🌐 Grenzen: AN" else "🌐 Grenzen: AUS"
+        }
+        binding.btnToggleBorders.setOnLongClickListener {
+            val next = !binding.globeOverlayView.diagnosticMarkersVisible
+            binding.globeOverlayView.diagnosticMarkersVisible = next
+            binding.globeOverlayView.postInvalidateOnAnimation()
+            updateGroundMarkerButtonText()
+            android.widget.Toast.makeText(this, if (next) "📍 Diagnose-Markierungen: AN" else "📍 Diagnose-Markierungen: AUS", android.widget.Toast.LENGTH_SHORT).show()
+            true
+        }
+
+        // Aufklappmenü für Ebenen & Optionen
+        binding.btnToggleViewOptions.setOnClickListener {
+            val isVis = binding.layoutViewOptionsMenu.visibility == View.VISIBLE
+            binding.layoutViewOptionsMenu.visibility = if (isVis) View.GONE else View.VISIBLE
+            binding.btnToggleViewOptions.text = if (isVis) "🎛️ Optionen ▴" else "🎛️ Optionen ▾"
+        }
+
+        // Toggle ISS-Bodenpunkt & Markierungen
+        updateGroundMarkerButtonText()
+        binding.btnToggleGroundMarker.setOnClickListener {
+            val next = !binding.globeOverlayView.diagnosticMarkersVisible
+            binding.globeOverlayView.diagnosticMarkersVisible = next
+            binding.globeOverlayView.postInvalidateOnAnimation()
+            updateGroundMarkerButtonText()
+        }
+
+        // Toggle Shader-Normalenanalyse
+        updateNormalAnalysisButtonText()
+        binding.btnToggleNormalAnalysis.setOnClickListener {
+            normalAnalysisEnabled = !normalAnalysisEnabled
+            binding.filamentView.setDebugVisualMode(if (normalAnalysisEnabled) 1 else 0)
+            updateNormalAnalysisButtonText()
         }
 
         // Live camera pose sync to 2D vector country labels overlay & optical lens flare
@@ -283,18 +387,28 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     }
 
     private fun updateMapSourceButtonText() {
+        val isRef = binding.filamentView.isReferenceMode
         val isSat = binding.filamentView.isSatelliteMode
-        if (isSat) {
-            val date = currentSatelliteInfo?.dateUtc ?: "NASA VIIRS"
-            binding.btnToggleMapSource.text = "🛰️ Satellit: VIIRS ($date)"
-            binding.btnToggleClouds.isEnabled = false
-            binding.btnToggleClouds.alpha = 0.5f
-            binding.btnToggleClouds.text = "☁️ Wolken: Im Satellitenbild"
-        } else {
-            binding.btnToggleMapSource.text = "🌍 Karte: Blue Marble"
-            binding.btnToggleClouds.isEnabled = true
-            binding.btnToggleClouds.alpha = 1.0f
-            updateCloudButtonText()
+        val date = currentSatelliteInfo?.dateUtc ?: "NASA VIIRS"
+        when {
+            isRef -> {
+                binding.btnToggleMapSource.text = "🛰️ Satellit: Referenz ($date)"
+                binding.btnToggleClouds.isEnabled = false
+                binding.btnToggleClouds.alpha = 0.5f
+                binding.btnToggleClouds.text = "☁️ Wolken: Unlit Referenz"
+            }
+            isSat -> {
+                binding.btnToggleMapSource.text = "🛰️ Satellit: VIIRS ($date)"
+                binding.btnToggleClouds.isEnabled = false
+                binding.btnToggleClouds.alpha = 0.5f
+                binding.btnToggleClouds.text = "☁️ Wolken: Im Satellitenbild"
+            }
+            else -> {
+                binding.btnToggleMapSource.text = "🌍 Karte: Blue Marble"
+                binding.btnToggleClouds.isEnabled = true
+                binding.btnToggleClouds.alpha = 1.0f
+                updateCloudButtonText()
+            }
         }
     }
 
@@ -303,10 +417,23 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         binding.globeOverlayView.setLabelsVisible(bordersVisible)
     }
 
+    private fun updateGroundMarkerButtonText() {
+        val visible = binding.globeOverlayView.diagnosticMarkersVisible
+        binding.btnToggleGroundMarker.text = if (visible) "🎯 Bodenpunkt: AN" else "🎯 Bodenpunkt: AUS"
+    }
+
+    private fun updateNormalAnalysisButtonText() {
+        binding.btnToggleNormalAnalysis.text = if (normalAnalysisEnabled) "🔬 Normalenanalyse: AN" else "🔬 Normalenanalyse: AUS"
+    }
+
     private fun setupCloudSync() {
         lifecycleScope.launch {
             cloudDownloader.cloudUpdateFlow.collectLatest { file ->
-                binding.filamentView.updateLiveClouds(file)
+                binding.filamentView.updateLiveClouds(
+                    file,
+                    IssFilamentView.CloudEncoding.GRAYSCALE_MASK,
+                    IssFilamentView.CloudNoDataMode.NODATA_NONE
+                )
                 updateCloudButtonText()
             }
         }
@@ -441,7 +568,28 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             System.currentTimeMillis()
         }
 
-        val snapshot = issTracker.updateFrame(frameTime)
+        val baseSnapshot = issTracker.updateFrame(frameTime)
+        val snapshot = if (debugSunOverride != null) {
+            val s = debugSunOverride!!
+            val sunPos = de.shakie.iss.orbit.SunPosition(
+                latitude = Math.toDegrees(asin(s[1].toDouble())),
+                longitude = Math.toDegrees(atan2(-s[2].toDouble(), s[0].toDouble())),
+                vectorX = s[0],
+                vectorY = s[1],
+                vectorZ = s[2]
+            )
+            val sunlight = de.shakie.iss.orbit.EclipseCalculator.getSunlightFactor(
+                issLatDeg = baseSnapshot.latitude,
+                issLonDeg = baseSnapshot.longitude,
+                issAltKm = baseSnapshot.altitudeKm,
+                sun = sunPos
+            )
+            baseSnapshot.copy(sun = sunPos, sunlightFactor = sunlight, isEclipsed = sunlight < 0.15f)
+        } else {
+            baseSnapshot
+        }
+
+        binding.globeOverlayView.issSubPointLatLon = Pair(snapshot.latitude, snapshot.longitude)
 
         if (!isObserverMode) {
             binding.filamentView.setSnapshot(snapshot)
