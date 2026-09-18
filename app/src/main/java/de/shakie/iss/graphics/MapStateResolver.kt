@@ -22,7 +22,8 @@ data class MapStateInput(
     val hasSatelliteTexture: Boolean = false,
     val downloadState: SatelliteDownloadState = SatelliteDownloadState.NOT_STARTED,
     val userCloudPreference: Boolean = true,
-    val isReferenceMode: Boolean = false
+    val isReferenceMode: Boolean = false,
+    val userBorderPreference: Boolean = true
 )
 
 data class EffectiveMapConfiguration(
@@ -31,11 +32,12 @@ data class EffectiveMapConfiguration(
     val isReferenceMode: Boolean,
     val statusLabel: String,
     val isSatellitePending: Boolean,
-    val isSatelliteFailed: Boolean
+    val isSatelliteFailed: Boolean,
+    val showBorders: Boolean = true
 )
 
 /**
- * Pure, deterministic state resolver for map source, cloud visibility, and reference mode.
+ * Pure, deterministic state resolver for map source, cloud visibility, borders, and reference mode.
  * Decouples requested mode from effectively rendered mode and prevents delayed downloads
  * from silently overriding user preferences or displaying stacked cloud layers.
  */
@@ -60,7 +62,15 @@ object MapStateResolver {
             else -> input.userCloudPreference
         }
 
-        // 3. Status label & download status
+        // 3. Border visibility rules:
+        // - In reference mode: borders are strictly OFF (0.0) in both shader and overlay.
+        // - Outside reference mode: user's saved borders preference is used.
+        val effectiveBorders = when {
+            input.isReferenceMode -> false
+            else -> input.userBorderPreference
+        }
+
+        // 4. Status label & download status
         val isPending = input.requestedSource == MapSourcePreference.SATELLITE &&
                 !input.hasSatelliteTexture &&
                 input.downloadState == SatelliteDownloadState.PENDING
@@ -84,7 +94,8 @@ object MapStateResolver {
             isReferenceMode = input.isReferenceMode,
             statusLabel = label,
             isSatellitePending = isPending,
-            isSatelliteFailed = isFailed
+            isSatelliteFailed = isFailed,
+            showBorders = effectiveBorders
         )
     }
 }

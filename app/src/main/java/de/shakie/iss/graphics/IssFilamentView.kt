@@ -82,6 +82,8 @@ class IssFilamentView @JvmOverloads constructor(
         private set
     var userCloudPreference: Boolean = true
         private set
+    var userBorderPreference: Boolean = true
+        private set
     var satelliteDownloadState: SatelliteDownloadState = SatelliteDownloadState.NOT_STARTED
         private set
     var isReferenceMode: Boolean = false
@@ -97,7 +99,8 @@ class IssFilamentView @JvmOverloads constructor(
                 hasSatelliteTexture = satelliteTexture != null,
                 downloadState = satelliteDownloadState,
                 userCloudPreference = userCloudPreference,
-                isReferenceMode = isReferenceMode
+                isReferenceMode = isReferenceMode,
+                userBorderPreference = userBorderPreference
             )
         )
 
@@ -349,6 +352,7 @@ class IssFilamentView @JvmOverloads constructor(
             instance.setParameter("sunDirection", 1.0f, 0.0f, 0.0f)
             instance.setParameter("time", 0.0f)
             instance.setParameter("cloudRelief", cloudRelief)
+            showBorders = if (config.showBorders) 1.0f else 0.0f
             instance.setParameter("showBorders", showBorders)
             instance.setParameter("showClouds", if (config.showClouds) 1.0f else 0.0f)
             instance.setParameter("isReferenceMode", if (config.isReferenceMode) 1.0f else 0.0f)
@@ -538,6 +542,10 @@ class IssFilamentView @JvmOverloads constructor(
         earthMaterialInstance?.setParameter("showClouds", if (config.showClouds) 1.0f else 0.0f)
         earthMaterialInstance?.setParameter("isReferenceMode", if (config.isReferenceMode) 1.0f else 0.0f)
 
+        // Effective borders: 0 in reference mode, otherwise user preference
+        showBorders = if (config.showBorders) 1.0f else 0.0f
+        earthMaterialInstance?.setParameter("showBorders", showBorders)
+
         atmosphereMesh?.let { mesh ->
             if (config.isReferenceMode) {
                 scene.removeEntity(mesh.entity)
@@ -552,7 +560,7 @@ class IssFilamentView @JvmOverloads constructor(
         view.bloomOptions = bloomOpts
 
         view.colorGrading = if (config.isReferenceMode) referenceColorGrading else standardColorGrading
-        Log.i("IssFilamentView", "Applied effective state: source=${config.activeTextureSource}, showClouds=${config.showClouds}, ref=${config.isReferenceMode}, label='${config.statusLabel}'")
+        Log.i("IssFilamentView", "Applied effective state: source=${config.activeTextureSource}, showClouds=${config.showClouds}, showBorders=$showBorders, ref=${config.isReferenceMode}, label='${config.statusLabel}'")
     }
 
     fun setMapMode(useSatellite: Boolean) {
@@ -570,8 +578,8 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     fun setBorderVisibility(visible: Boolean) {
-        showBorders = if (visible) 1.0f else 0.0f
-        earthMaterialInstance?.setParameter("showBorders", showBorders)
+        userBorderPreference = visible
+        applyEffectiveState()
     }
 
     fun setCloudVisibility(visible: Boolean) {

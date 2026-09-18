@@ -766,6 +766,7 @@ class OrbitMathTest {
         )
         assertEquals(EffectiveTextureSource.SATELLITE_VIIRS, state6.activeTextureSource)
         assertFalse("Reference mode must have NO clouds", state6.showClouds)
+        assertFalse("Reference mode must strictly suppress borders (showBorders=false)", state6.showBorders)
         assertTrue(state6.isReferenceMode)
         assertEquals("🛰️ Satellit: Referenz", state6.statusLabel)
 
@@ -784,6 +785,42 @@ class OrbitMathTest {
         assertFalse(state7.isSatellitePending)
         assertTrue("Must signal failed satellite download", state7.isSatelliteFailed)
         assertEquals("🛰️ Satellit: Fehler (Fallback)", state7.statusLabel)
+    }
+
+    @Test
+    fun testReferenceModeSuppressesBordersAndRestoresPreference() {
+        // User has borders ON
+        val onInput = MapStateInput(
+            requestedSource = MapSourcePreference.SATELLITE,
+            hasSatelliteTexture = true,
+            userBorderPreference = true,
+            isReferenceMode = false
+        )
+        val normalState = MapStateResolver.resolve(onInput)
+        assertTrue("Normal mode with userBorderPreference=true must show borders", normalState.showBorders)
+
+        // Enter reference mode: borders MUST be suppressed (0)
+        val refInput = onInput.copy(isReferenceMode = true)
+        val refState = MapStateResolver.resolve(refInput)
+        assertFalse("Reference mode MUST suppress borders (showBorders=false) even if user preference is ON", refState.showBorders)
+
+        // Exit reference mode: borders MUST be restored to user preference (ON)
+        val exitInput = refInput.copy(isReferenceMode = false)
+        val restoredState = MapStateResolver.resolve(exitInput)
+        assertTrue("Exiting reference mode MUST restore user border preference (true)", restoredState.showBorders)
+
+        // If user previously turned borders OFF
+        val offInput = onInput.copy(userBorderPreference = false)
+        val offState = MapStateResolver.resolve(offInput)
+        assertFalse("User border preference OFF must be respected", offState.showBorders)
+
+        // Entering reference mode with borders OFF keeps borders OFF
+        val refOffState = MapStateResolver.resolve(offInput.copy(isReferenceMode = true))
+        assertFalse(refOffState.showBorders)
+
+        // Exiting reference mode restores borders OFF
+        val restoredOffState = MapStateResolver.resolve(offInput.copy(isReferenceMode = false))
+        assertFalse("Exiting reference mode MUST restore user border preference (false)", restoredOffState.showBorders)
     }
 
     @Test
