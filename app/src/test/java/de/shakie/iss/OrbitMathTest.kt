@@ -84,6 +84,19 @@ class OrbitMathTest {
             sun = sun
         )
         assertEquals(0.0f, nightFactor, 1e-3f)
+
+        // Umbra boundary verification: grazing height <= 16 km must be completely dark (0.0)
+        // With Earth radius 6371 km, umbra boundary is 6387 km.
+        val rUmbra = 6371.0 + 15.0
+        // When dot = -100 km, dPerp = sqrt(r^2 - dot^2)
+        // If dPerp <= 6387 km -> 0.0f
+        val factorAtExtinction = EclipseCalculator.getSunlightFactor(
+            issLatDeg = 0.0,
+            issLonDeg = 90.0 + Math.toDegrees(asin(15.0 / rUmbra)),
+            issAltKm = 15.0,
+            sun = sun
+        )
+        assertEquals(0.0f, factorAtExtinction, 1e-3f)
     }
 
     @Test

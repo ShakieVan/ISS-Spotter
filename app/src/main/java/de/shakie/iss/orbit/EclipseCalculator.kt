@@ -4,7 +4,10 @@ import kotlin.math.*
 
 object EclipseCalculator {
     const val EARTH_RADIUS_KM = 6371.0
-    private const val PENUMBRA_BAND_KM = 65.0
+    // The dense lower atmosphere (troposphere & stratosphere) completely extinguishes grazing sun rays
+    // at tangent altitudes below ~16 km. The Sun's ~0.53° angular disc subtends ~32 km at LEO orbital distances.
+    const val UMBRA_RADIUS_KM = EARTH_RADIUS_KM + 16.0
+    const val PENUMBRA_RADIUS_KM = UMBRA_RADIUS_KM + 32.0
 
     /**
      * Calculates the solar illumination factor on the ISS.
@@ -40,17 +43,16 @@ object EclipseCalculator {
         val perpZ = pz - dot * sun.vectorZ
         val dPerp = sqrt(perpX * perpX + perpY * perpY + perpZ * perpZ)
 
-        // Compare against Earth radius + atmospheric buffer
-        val shadowRadius = EARTH_RADIUS_KM
-        if (dPerp >= shadowRadius + PENUMBRA_BAND_KM) {
+        // Compare against physical atmospheric extinction boundaries
+        if (dPerp >= PENUMBRA_RADIUS_KM) {
             return 1.0f
         }
-        if (dPerp <= shadowRadius - PENUMBRA_BAND_KM) {
+        if (dPerp <= UMBRA_RADIUS_KM) {
             return 0.0f
         }
 
-        // Smooth transition across penumbra
-        val t = (dPerp - (shadowRadius - PENUMBRA_BAND_KM)) / (2.0 * PENUMBRA_BAND_KM)
-        return (t * t * (3.0 - 2.0 * t)).toFloat()
+        // Smooth cubic transition across penumbra
+        val t = (dPerp - UMBRA_RADIUS_KM) / (PENUMBRA_RADIUS_KM - UMBRA_RADIUS_KM)
+        return (t * t * (3.0 - 2.0 * t)).toFloat().coerceIn(0.0f, 1.0f)
     }
 }

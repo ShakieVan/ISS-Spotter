@@ -1,13 +1,17 @@
 package de.shakie.iss
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.util.Log
 import android.view.Choreographer
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +42,50 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     private var cloudsVisible = true
     private var isObserverMode = false
     private var locationListener: LocationListener? = null
+
+    // Debug control for automated testing & angle inspection via ADB
+    private var debugTimeOverride: Long? = null
+    private var debugFreeze: Boolean = false
+
+    private val debugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            intent ?: return
+            if (intent.hasExtra("reset") && intent.getBooleanExtra("reset", false)) {
+                binding.filamentView.resetCameraView()
+                debugTimeOverride = null
+                debugFreeze = false
+                Log.i("MainActivity", "Debug: reset camera and time override")
+                return
+            }
+            if (intent.hasExtra("yaw")) {
+                binding.filamentView.cameraController.yawOffsetDeg = intent.getFloatExtra("yaw", 0f)
+            }
+            if (intent.hasExtra("pitch")) {
+                binding.filamentView.cameraController.pitchOffsetDeg = intent.getFloatExtra("pitch", 0f)
+            }
+            if (intent.hasExtra("zoom")) {
+                binding.filamentView.cameraController.zoomFactor = intent.getFloatExtra("zoom", 1f)
+            }
+            if (intent.hasExtra("time")) {
+                debugTimeOverride = intent.getLongExtra("time", System.currentTimeMillis())
+            }
+            if (intent.hasExtra("freeze")) {
+                debugFreeze = intent.getBooleanExtra("freeze", false)
+            }
+            if (intent.hasExtra("clouds")) {
+                cloudsVisible = intent.getBooleanExtra("clouds", true)
+                binding.filamentView.setCloudVisibility(cloudsVisible)
+                updateCloudButtonText()
+            }
+            if (intent.hasExtra("borders")) {
+                bordersVisible = intent.getBooleanExtra("borders", true)
+                binding.filamentView.setBorderVisibility(bordersVisible)
+                updateBorderButtonText()
+            }
+            binding.filamentView.onCameraModified?.invoke(binding.filamentView.cameraController.isModified())
+            Log.i("MainActivity", "Debug scene updated: yaw=${binding.filamentView.cameraController.yawOffsetDeg}, pitch=${binding.filamentView.cameraController.pitchOffsetDeg}, zoom=${binding.filamentView.cameraController.zoomFactor}, time=$debugTimeOverride, freeze=$debugFreeze")
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -86,6 +134,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         setupSensors()
         setupCloudSync()
         checkPermissions()
+
+        val filter = IntentFilter("de.shakie.iss.DEBUG_SCENE")
+        ContextCompat.registerReceiver(this, debugReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
     }
 
     private fun setupUI() {
@@ -211,6 +262,11 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         }
     }
 
+    private fun updateBorderButtonText() {
+        binding.btnToggleBorders.text = if (bordersVisible) "🌐 Grenzen: AN" else "🌐 Grenzen: AUS"
+        binding.globeOverlayView.setLabelsVisible(bordersVisible)
+    }
+
     private fun setupCloudSync() {
         lifecycleScope.launch {
             cloudDownloader.cloudUpdateFlow.collectLatest { file ->
@@ -328,7 +384,16 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     override fun doFrame(frameTimeNanos: Long) {
         Choreographer.getInstance().postFrameCallback(this)
 
-        val snapshot = issTracker.updateFrame()
+        val frameTime = if (debugFreeze && debugTimeOverride != null) {
+            debugTimeOverride!!
+        } else if (debugTimeOverride != null) {
+            debugTimeOverride = debugTimeOverride!! + 16
+            debugTimeOverride!!
+        } else {
+            System.currentTimeMillis()
+        }
+
+        val snapshot = issTracker.updateFrame(frameTime)
 
         if (!isObserverMode) {
             binding.filamentView.setSnapshot(snapshot)
@@ -353,15 +418,24 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         val overflightLoc = de.shakie.iss.graphics.CountryCatalog.findOverflightLocation(snapshot.latitude, snapshot.longitude)
         binding.tvOverflight.text = "ÜBERFLIEGT: $overflightLoc"
 
-        // Sunlight / Eclipse Status
-        if (snapshot.isEclipsed) {
-            binding.tvSunlightStatus.text = "● IM ERDSCHATTEN"
-            binding.tvSunlightStatus.setTextColor(ContextCompat.getColor(this, R.color.red_eclipse))
-            binding.tvSunlightStatus.setBackgroundColor(Color.parseColor("#33D63031"))
-        } else {
-            binding.tvSunlightStatus.text = "● IM SONNENLICHT"
-            binding.tvSunlightStatus.setTextColor(ContextCompat.getColor(this, R.color.green_sunlight))
-            binding.tvSunlightStatus.setBackgroundColor(Color.parseColor("#3300B894"))
+        // Sunlight / Penumbra / Umbra Eclipse Status
+        val sunlight = snapshot.sunlightFactor
+        when {
+            sunlight <= 0.05f -> {
+                binding.tvSunlightStatus.text = "● IM ERDSCHATTEN"
+                binding.tvSunlightStatus.setTextColor(ContextCompat.getColor(this, R.color.red_eclipse))
+                binding.tvSunlightStatus.setBackgroundColor(Color.parseColor("#33D63031"))
+            }
+            sunlight < 0.85f -> {
+                binding.tvSunlightStatus.text = "● DÄMMERUNG"
+                binding.tvSunlightStatus.setTextColor(Color.parseColor("#FFAA00"))
+                binding.tvSunlightStatus.setBackgroundColor(Color.parseColor("#33FFAA00"))
+            }
+            else -> {
+                binding.tvSunlightStatus.text = "● IM SONNENLICHT"
+                binding.tvSunlightStatus.setTextColor(ContextCompat.getColor(this, R.color.green_sunlight))
+                binding.tvSunlightStatus.setBackgroundColor(Color.parseColor("#3300B894"))
+            }
         }
 
         // Relative to observer
@@ -394,6 +468,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(debugReceiver)
+        } catch (ignored: Exception) {}
         stopLocationUpdates()
         issTracker.destroy()
         cloudDownloader.destroy()
