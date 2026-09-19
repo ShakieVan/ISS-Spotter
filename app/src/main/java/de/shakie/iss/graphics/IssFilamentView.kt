@@ -709,7 +709,10 @@ class IssFilamentView @JvmOverloads constructor(
         atmosphereMaterialInstance?.setParameter("cameraPosition", camPose[0], camPose[1], camPose[2])
         val eye = OrbitVector.from(camPose)
         val near = OrbitScale.nearPlane((eye - OrbitVector.from(issPos)).length())
-        camera.setProjection(OrbitScale.FOV_Y_DEG, aspect.toDouble(), near, OrbitScale.FAR_PLANE, Camera.Fov.VERTICAL)
+        // The render projection is infinite-far in Filament. Only local Earth/ISS geometry
+        // needs a finite culling range; the sky renderables explicitly disable frustum culling.
+        val far = OrbitScale.cullingFarPlane(eye)
+        camera.setProjection(OrbitScale.FOV_Y_DEG, aspect.toDouble(), near, far, Camera.Fov.VERTICAL)
         updateCelestialTransforms(snapshot.timestampMillis, eye)
         camera.lookAt(
             camPose[0].toDouble(), camPose[1].toDouble(), camPose[2].toDouble(),
@@ -799,8 +802,8 @@ class IssFilamentView @JvmOverloads constructor(
         override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
             val factor = detector.scaleFactor
             if (factor > 0.01f) {
-                // Logarithmic distance is handled by the controller; avoid an extreme optical FOV.
-                cameraController.zoomFactor = cameraController.zoomFactor / factor
+                // Scale the physical distance, not the logarithmic UI/debug parameter.
+                cameraController.zoomByScale(factor)
                 onCameraModified?.invoke(cameraController.isModified())
             }
             return true
@@ -826,7 +829,7 @@ class IssFilamentView @JvmOverloads constructor(
                     val dx = event.x - lastTouchX
                     val dy = event.y - lastTouchY
                     cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg + dx * 0.16f).mod(360f)
-                    cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.16f).coerceIn(-85f, 85f)
+                    cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.16f).coerceIn(OrbitCameraController.MIN_PITCH, OrbitCameraController.MAX_PITCH)
                     lastTouchX = event.x
                     lastTouchY = event.y
                     onCameraModified?.invoke(cameraController.isModified())

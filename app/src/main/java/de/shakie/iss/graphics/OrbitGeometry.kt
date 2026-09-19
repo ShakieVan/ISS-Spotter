@@ -45,7 +45,19 @@ object OrbitScale {
     fun metersToWorld(meters: Double) = meters * EARTH_RADIUS / (EARTH_RADIUS_KM * 1000.0)
     val ISS_WORLD_SPAN = metersToWorld(ISS_SPAN_METERS)
     val ISS_MODEL_SCALE = ISS_WORLD_SPAN / MODEL_SPAN
-    fun nearPlane(cameraDistanceToIss: Double): Double = (cameraDistanceToIss * 0.08).coerceIn(0.000005, 0.1)
+    val ISS_BOUND_RADIUS = (MODEL_MAX - MODEL_MIN).length() * ISS_MODEL_SCALE * 0.5
+    fun nearPlane(cameraDistanceToIss: Double): Double {
+        // Preserve the complete physical model, but do not sacrifice depth precision needlessly.
+        val frontClearance = (cameraDistanceToIss - ISS_BOUND_RADIUS).coerceAtLeast(metersToWorld(1.0))
+        return (frontClearance * 0.35).coerceIn(metersToWorld(0.1), 0.1)
+    }
+    fun cullingFarPlane(eye: OrbitVector): Double {
+        // Filament 1.75.1 renders with infinite far, but extracts its culling planes in float.
+        // A 5000-unit culling range with a sub-millimetre-world near plane rounds p22 to -1,
+        // degenerating the far-plane normal. Bound culling to Earth/ISS, not the sky dome.
+        // All sky renderables already have culling(false), and retain their infinite render range.
+        return max(32.0, eye.length() + 2.0 * EARTH_RADIUS)
+    }
     fun earthOverviewDistance(aspect: Double): Double {
         // Exact angular silhouette of a sphere, diameter <= 48% of viewport width.
         val tanHalfH = tan(Math.toRadians(FOV_Y_DEG * 0.5)) * aspect.coerceIn(0.2, 4.0)

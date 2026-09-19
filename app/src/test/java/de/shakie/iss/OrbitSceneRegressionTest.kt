@@ -40,19 +40,29 @@ class OrbitSceneRegressionTest {
     }
 
     @Test fun maximumZoomFitsHalfTheWidthForAllAspectRatios() {
+        // Updated requirement: the station, not Earth's centre, remains the pivot at maximum zoom.
         for (aspect in listOf(0.3f, 0.54f, 0.7f, 1f, 1.8f, 3f)) {
             val c = OrbitCameraController().apply { viewportAspect = aspect; zoomFactor = OrbitCameraController.MAX_ZOOM }
             for (lat in listOf(-51.6,0.0,51.6)) for (yaw in listOf(0f,75f,180f,300f)) {
                 c.yawOffsetDeg = yaw
-                val pose = c.computeCameraPose(OrbitVector.geographic(lat, 143.0,10.66).floats(), FloatArray(3))
+                val iss = OrbitVector.from(OrbitVector.geographic(lat, 143.0,10.66).floats())
+                val pose = c.computeCameraPose(iss.floats(), FloatArray(3))
                 val projection = OrbitScreenProjection(pose,1080.0,1080.0/aspect)
-                val center = projection.project(OrbitVector.ZERO)!!
-                near(center[0],540.0,0.03)
-                near(center[1],540.0/aspect,0.03)
-                val d = projection.eye.length()
+                val station = projection.project(iss)!!
+                near(station[0],540.0,0.03)
+                near(station[1],540.0/aspect,0.03)
+                val f = (OrbitVector.from(pose,3) - projection.eye).unit()
+                val r = f.cross(OrbitVector.from(pose,6)).unit()
+                val earth = projection.eye * -1.0
+                val x = earth.dot(r)
+                val z = earth.dot(f)
+                check(z > OrbitScale.EARTH_RADIUS)
                 val tanH = tan(Math.toRadians(21.0)) * aspect
-                val fraction = 10.0 / sqrt(d*d - 100.0) / tanH
-                near(fraction,0.48,1e-5)
+                val root = 10.0 * sqrt(x*x + z*z - 100.0)
+                val left = (x*z-root)/(z*z-100.0)
+                val right = (x*z+root)/(z*z-100.0)
+                check(left >= -tanH && right <= tanH)
+                check((right-left)/(2.0*tanH) <= 0.48001)
             }
         }
     }
