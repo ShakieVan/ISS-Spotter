@@ -67,18 +67,22 @@ class OrbitSceneRegressionTest {
         }
     }
 
-    @Test fun cameraStaysOutsideEarthAndNorthUp() {
+    @Test fun freeOrbitKeepsAnOrthonormalBasisAndTheStationPivot() {
         val c = OrbitCameraController()
         for (lat in listOf(-90.0,-51.6,0.0,51.6,90.0)) for (z in listOf(0.35f,1f,3f,5f,7f,9f,12f))
             for (yaw in 0..330 step 30) for (pitch in listOf(-80f,0f,80f)) {
                 c.zoomFactor=z;c.yawOffsetDeg=yaw.toFloat();c.pitchOffsetDeg=pitch
                 val pose = c.computeCameraPose(OrbitVector.geographic(lat,56.0,10.66).floats(),FloatArray(3))
                 check(pose.all { it.isFinite() })
-                check(OrbitVector.from(pose).length() >= 10.0001)
                 val f=(OrbitVector.from(pose,3)-OrbitVector.from(pose)).unit()
                 val u=OrbitVector.from(pose,6)
                 near(f.dot(u),0.0,2e-5)
-                check(u.y >= -1e-6)
+                near(u.length(),1.0,2e-5)
+                // Surface collision and forced global-Y-up were explicitly removed.
+                val iss=OrbitVector.from(OrbitVector.geographic(lat,56.0,10.66).floats())
+                val delta=iss-OrbitVector.from(pose)
+                check((delta-f*delta.dot(f)).length() < 3e-6+delta.length()*2e-5)
+                near(delta.length(),c.cameraDistance(),3e-5)
             }
     }
 
@@ -103,7 +107,7 @@ class OrbitSceneRegressionTest {
     @Test fun starDirectionsAgreeWithIndependentHourAngleProjection() {
         val latitude=Math.toRadians(49.5);val longitude=12.0
         val enuEast=OrbitVector.geographic(0.0,longitude+90.0)
-        val up=OrbitVector.geographic(Math.toDegrees(latitude),longitude)
+        val up=OrbitVector.geographic(latitude*180.0/Math.PI,longitude)
         val north=(OrbitVector.Y-up*up.y).unit()
         for (ra in listOf(0.2,6.0,12.5,23.8)) for(dec in listOf(-60.0,0.0,55.0,89.26)) {
             val v=OrbitSky.direction(ra,dec,instant)

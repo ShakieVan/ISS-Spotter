@@ -137,6 +137,12 @@ class IssFilamentView @JvmOverloads constructor(
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var isDragging = false
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+
+    // Free orbit may cross the Earth. Only visibility changes there, never the pose.
+    private var cameraInsideGlobe = false
+    private var earthVisible = true
+    private var atmosphereVisible = true
 
     private var viewWidth = 1
     private var viewHeight = 1
@@ -548,14 +554,7 @@ class IssFilamentView @JvmOverloads constructor(
         showBorders = if (config.showBorders) 1.0f else 0.0f
         earthMaterialInstance?.setParameter("showBorders", showBorders)
 
-        atmosphereMesh?.let { mesh ->
-            if (config.isReferenceMode) {
-                scene.removeEntity(mesh.entity)
-            } else {
-                scene.removeEntity(mesh.entity)
-                scene.addEntity(mesh.entity)
-            }
-        }
+        applyGlobeVisibility()
 
         val bloomOpts = view.bloomOptions
         bloomOpts.enabled = !config.isReferenceMode
@@ -563,6 +562,19 @@ class IssFilamentView @JvmOverloads constructor(
 
         view.colorGrading = if (config.isReferenceMode) referenceColorGrading else standardColorGrading
         Log.i("IssFilamentView", "Applied effective state: source=${config.activeTextureSource}, lightingMode=${config.mapLightingMode}, showClouds=${config.showClouds}, showBorders=$showBorders, ref=${config.isReferenceMode}, label='${config.statusLabel}'")
+    }
+
+    private fun applyGlobeVisibility() {
+        val showEarth = !cameraInsideGlobe
+        val showAtmosphere = showEarth && !isReferenceMode
+        if (earthVisible != showEarth) {
+            earthMesh?.let { if (showEarth) scene.addEntity(it.entity) else scene.removeEntity(it.entity) }
+            earthVisible = showEarth
+        }
+        if (atmosphereVisible != showAtmosphere) {
+            atmosphereMesh?.let { if (showAtmosphere) scene.addEntity(it.entity) else scene.removeEntity(it.entity) }
+            atmosphereVisible = showAtmosphere
+        }
     }
 
     fun setMapMode(useSatellite: Boolean) {
@@ -708,6 +720,8 @@ class IssFilamentView @JvmOverloads constructor(
         val camPose = cameraController.computeCameraPose(issPos, obsPos)
         atmosphereMaterialInstance?.setParameter("cameraPosition", camPose[0], camPose[1], camPose[2])
         val eye = OrbitVector.from(camPose)
+        cameraInsideGlobe = OrbitScale.cameraInsideEarth(eye)
+        applyGlobeVisibility()
         val near = OrbitScale.nearPlane((eye - OrbitVector.from(issPos)).length())
         // The render projection is infinite-far in Filament. Only local Earth/ISS geometry
         // needs a finite culling range; the sky renderables explicitly disable frustum culling.
@@ -812,32 +826,55 @@ class IssFilamentView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
-        if (scaleDetector.isInProgress) {
-            isDragging = false
-            return true
-        }
-
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                lastTouchX = event.x
-                lastTouchY = event.y
+                activePointerId = event.getPointerId(0)
+                lastTouchX = event.getX(0)
+                lastTouchY = event.getY(0)
                 isDragging = true
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                isDragging = false
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                // Rebase on the remaining finger; never treat a pointer-index change
+                // or the last pinch span as a one-finger camera rotation.
+                val remaining = (0 until event.pointerCount).firstOrNull { it != event.actionIndex }
+                if (remaining != null) {
+                    activePointerId = event.getPointerId(remaining)
+                    lastTouchX = event.getX(remaining)
+                    lastTouchY = event.getY(remaining)
+                } else {
+                    activePointerId = MotionEvent.INVALID_POINTER_ID
+                }
+                isDragging = false
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (isDragging && event.pointerCount == 1) {
-                    val dx = event.x - lastTouchX
-                    val dy = event.y - lastTouchY
-                    cameraController.yawOffsetDeg = (cameraController.yawOffsetDeg + dx * 0.16f).mod(360f)
-                    cameraController.pitchOffsetDeg = (cameraController.pitchOffsetDeg + dy * 0.16f).coerceIn(OrbitCameraController.MIN_PITCH, OrbitCameraController.MAX_PITCH)
-                    lastTouchX = event.x
-                    lastTouchY = event.y
+                if (event.pointerCount != 1 || scaleDetector.isInProgress) {
+                    isDragging = false
+                    return true
+                }
+                val index = event.findPointerIndex(activePointerId).takeIf { it >= 0 } ?: 0
+                val x = event.getX(index)
+                val y = event.getY(index)
+                if (isDragging) {
+                    cameraController.orbitByPixels(x - lastTouchX, y - lastTouchY)
                     onCameraModified?.invoke(cameraController.isModified())
                 }
+                activePointerId = event.getPointerId(index)
+                lastTouchX = x
+                lastTouchY = y
+                isDragging = true
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isDragging = false
+                activePointerId = MotionEvent.INVALID_POINTER_ID
+                parent?.requestDisallowInterceptTouchEvent(false)
                 return true
             }
         }
@@ -845,6 +882,7 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     fun resetCameraView() {
+        isDragging = false
         cameraController.reset()
         onCameraModified?.invoke(false)
     }

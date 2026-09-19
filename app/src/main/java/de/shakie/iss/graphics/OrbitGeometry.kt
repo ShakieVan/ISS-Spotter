@@ -36,6 +36,7 @@ object OrbitScale {
     const val FOV_Y_DEG = 42.0
     const val SKY_RADIUS = 4000.0
     const val FAR_PLANE = 5000.0
+    fun cameraInsideEarth(eye: OrbitVector): Boolean = eye.length() < EARTH_RADIUS
     // Measured POSITION bounds of the displayed polySurfa1/2/3 meshes in iss_nasa.glb.
     // Git blob 884cdf03d96b28285c1cdfdd34fcfd4f5de0021d; bended*/pCyl* are not displayed.
     val MODEL_MIN = OrbitVector(-2.830271005630493, -4.168513774871826, -22.86463165283203)
@@ -94,6 +95,9 @@ object OrbitSky {
             eye.x.toFloat(), eye.y.toFloat(), eye.z.toFloat(), 1f)
     }
     fun rayBlockedByEarth(eye: OrbitVector, direction: OrbitVector): Boolean {
+        // The user may freely move the orbit camera inside the globe. Its interior
+        // is intentionally transparent, including the labels' occultation test.
+        if (OrbitScale.cameraInsideEarth(eye)) return false
         val t = -eye.dot(direction)
         return t > 0.0 && (eye + direction * t).length() < OrbitScale.EARTH_RADIUS
     }
