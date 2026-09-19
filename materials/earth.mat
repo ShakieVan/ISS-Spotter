@@ -17,7 +17,8 @@ material {
         { type : float, name : isReferenceMode },
         { type : float, name : debugVisualMode },
         { type : float, name : cloudEncoding },
-        { type : float, name : cloudNoDataMode }
+        { type : float, name : cloudNoDataMode },
+        { type : float, name : mapLightingMode }
     ]
 }
 
@@ -119,19 +120,33 @@ fragment {
             material.baseColor = float4(valColor, 1.0);
             return;
         }
+        float4 daySample = texture(materialParams_dayMap, uv);
+        float4 borderSample = texture(materialParams_borderMap, uv);
+
         // 7.0: Effective cloud opacity after NoData filtering
-        if (materialParams.debugVisualMode >= 6.5) {
+        if (materialParams.debugVisualMode >= 6.5 && materialParams.debugVisualMode < 7.5) {
             CloudSample cs = sampleCloud(uv);
             float eff = (cs.isValid > 0.5) ? cs.opacity : 0.0;
             material.baseColor = float4(float3(eff), 1.0);
             return;
         }
-
-        float4 daySample = texture(materialParams_dayMap, uv);
-        float4 borderSample = texture(materialParams_borderMap, uv);
+        // 8.0: satDayMask on VIIRS (1.0 = satellite day, 0.0 = night)
+        if (materialParams.debugVisualMode >= 7.5 && materialParams.debugVisualMode < 8.5) {
+            float sMask = smoothstep(-0.06, 0.06, sunDot);
+            material.baseColor = float4(float3(sMask), 1.0);
+            return;
+        }
+        // 9.0: VIIRS Ocean / Water detection mask
+        if (materialParams.debugVisualMode >= 8.5) {
+            float isWater = clamp((daySample.b - max(daySample.r * 1.15, daySample.g * 0.95)) * 12.0, 0.0, 1.0);
+            float lum = dot(daySample.rgb, float3(0.299, 0.587, 0.114));
+            isWater *= smoothstep(0.42, 0.18, lum);
+            material.baseColor = float4(float3(isWater), 1.0);
+            return;
+        }
 
         // =========================================================
-        // A. SATELLITE / RAW MAP REFERENCE VIEW
+        // A. SATELLITE / RAW MAP REFERENCE VIEW (Technisch neutral)
         // =========================================================
         // In reference mode, the texture is displayed raw and color-faithful
         // without artificial solar darkening, night lights, or simulated lighting.
@@ -149,6 +164,66 @@ fragment {
             material.baseColor = float4(refColor, 1.0);
             return;
         }
+
+        // =========================================================
+        // B. VIIRS TRUECOLOR VISUAL / REALISTIC
+        // =========================================================
+        // VIIRS TrueColor is an optically illuminated satellite observation mosaic.
+        // DO NOT re-light with surfaceDayLight * directSunColor * shadowFactor.
+        // Day side retains natural, brilliant satellite brightness.
+        if (materialParams.mapLightingMode > 0.5) {
+            float3 satelliteDay = daySample.rgb;
+
+            // 1. Controlled, subtle sun glint on ocean only
+            // Water detection on VIIRS: low red/green, higher blue, low overall luminance
+            float isWater = clamp((daySample.b - max(daySample.r * 1.15, daySample.g * 0.95)) * 12.0, 0.0, 1.0);
+            float lum = dot(daySample.rgb, float3(0.299, 0.587, 0.114));
+            isWater *= smoothstep(0.42, 0.18, lum);
+
+            float3 reflected = reflect(-sunDir, normal);
+            float specAngle = max(dot(reflected, eyeDir), 0.0);
+            float sunAboveHorizon = smoothstep(0.02, 0.15, sunDot);
+            // Subtle, non-overpowering ocean specular reflection
+            float viirsGlint = pow(specAngle, 96.0) * isWater * sunAboveHorizon * 0.35;
+            float3 glintColor = float3(1.0, 0.98, 0.95) * viirsGlint;
+
+            // 2. Sunset/twilight warmth near terminator (only in twilight band [-0.04, 0.12])
+            float sunsetFactor = smoothstep(-0.04, 0.02, sunDot) * (1.0 - smoothstep(0.02, 0.12, sunDot));
+            float3 sunsetTint = mix(float3(1.0), float3(1.05, 0.78, 0.52), sunsetFactor * 0.40);
+            float3 litSatelliteDay = satelliteDay * sunsetTint + glintColor;
+
+            // 3. Night side with night lights and faint starlight/ambient
+            float4 nightSample = texture(materialParams_nightMap, uv);
+            float3 nightSide = nightSample.rgb * 2.8;
+            float3 nightAmbient = satelliteDay * 0.012 * float3(0.35, 0.50, 0.75);
+            float3 surfaceNight = nightSide + nightAmbient;
+
+            // 4. Smooth terminator transition without darkening the day side:
+            // For sunDot >= 0.06: satDayMask is strictly 1.0 (original satellite brightness).
+            // For sunDot <= -0.06: satDayMask is strictly 0.0 (night lights).
+            float satDayMask = smoothstep(-0.06, 0.06, sunDot);
+            float3 surfaceColor = mix(surfaceNight, litSatelliteDay, satDayMask);
+
+            // 5. Inverted high-contrast borders & country labels (if enabled)
+            if (materialParams.showBorders > 0.01 && borderSample.a > 0.01) {
+                float bgLum = dot(surfaceColor, float3(0.299, 0.587, 0.114));
+                float3 invertedColor = float3(1.0) - surfaceColor;
+                float3 highContrast = (bgLum > 0.42) 
+                    ? float3(0.08, 0.10, 0.14) 
+                    : float3(0.92, 0.96, 1.00);
+                float3 borderCol = mix(invertedColor, highContrast, 0.75);
+                float borderAlpha = borderSample.a * materialParams.showBorders;
+                surfaceColor = mix(surfaceColor, borderCol, borderAlpha);
+            }
+
+            material.baseColor = float4(surfaceColor, 1.0);
+            return;
+        }
+
+        // =========================================================
+        // C. BLUE MARBLE ALBEDO SIMULATION
+        // =========================================================
+        // Full physical simulation with dynamic solar lighting, clouds, shadows, and glint.
 
         // =========================================================
         // 1. DAY / TWILIGHT / NIGHT TRANSITION & SUNSET SPECTRUM

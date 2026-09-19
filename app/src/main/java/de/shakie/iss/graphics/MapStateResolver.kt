@@ -17,6 +17,11 @@ enum class SatelliteDownloadState {
     FAILED
 }
 
+enum class MapLightingMode(val value: Float) {
+    BLUE_MARBLE_ALBEDO(0.0f),
+    VIIRS_TRUECOLOR(1.0f)
+}
+
 data class MapStateInput(
     val requestedSource: MapSourcePreference = MapSourcePreference.BLUE_MARBLE,
     val hasSatelliteTexture: Boolean = false,
@@ -33,7 +38,8 @@ data class EffectiveMapConfiguration(
     val statusLabel: String,
     val isSatellitePending: Boolean,
     val isSatelliteFailed: Boolean,
-    val showBorders: Boolean = true
+    val showBorders: Boolean = true,
+    val mapLightingMode: MapLightingMode = if (activeTextureSource == EffectiveTextureSource.SATELLITE_VIIRS) MapLightingMode.VIIRS_TRUECOLOR else MapLightingMode.BLUE_MARBLE_ALBEDO
 )
 
 /**
@@ -88,6 +94,12 @@ object MapStateResolver {
             else -> "🌍 Karte: Blue Marble"
         }
 
+        val lightingMode = if (effectiveSource == EffectiveTextureSource.SATELLITE_VIIRS) {
+            MapLightingMode.VIIRS_TRUECOLOR
+        } else {
+            MapLightingMode.BLUE_MARBLE_ALBEDO
+        }
+
         return EffectiveMapConfiguration(
             activeTextureSource = effectiveSource,
             showClouds = effectiveClouds,
@@ -95,7 +107,8 @@ object MapStateResolver {
             statusLabel = label,
             isSatellitePending = isPending,
             isSatelliteFailed = isFailed,
-            showBorders = effectiveBorders
+            showBorders = effectiveBorders,
+            mapLightingMode = lightingMode
         )
     }
 }

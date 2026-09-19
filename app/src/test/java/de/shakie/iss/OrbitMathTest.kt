@@ -688,6 +688,7 @@ class OrbitMathTest {
             )
         )
         assertEquals(EffectiveTextureSource.BLUE_MARBLE, state1.activeTextureSource)
+        assertEquals(MapLightingMode.BLUE_MARBLE_ALBEDO, state1.mapLightingMode)
         assertTrue("Blue Marble with cloud preference ON must show clouds", state1.showClouds)
         assertFalse(state1.isReferenceMode)
         assertFalse(state1.isSatellitePending)
@@ -705,6 +706,7 @@ class OrbitMathTest {
             )
         )
         assertEquals(EffectiveTextureSource.BLUE_MARBLE, state2.activeTextureSource)
+        assertEquals(MapLightingMode.BLUE_MARBLE_ALBEDO, state2.mapLightingMode)
         assertTrue("During satellite download fallback, user cloud preference must be preserved", state2.showClouds)
         assertTrue("Must signal pending satellite download", state2.isSatellitePending)
         assertFalse(state2.isSatelliteFailed)
@@ -721,6 +723,7 @@ class OrbitMathTest {
             )
         )
         assertEquals(EffectiveTextureSource.SATELLITE_VIIRS, state3.activeTextureSource)
+        assertEquals(MapLightingMode.VIIRS_TRUECOLOR, state3.mapLightingMode)
         assertFalse("VIIRS satellite image MUST NEVER stack extra cloud layer on top!", state3.showClouds)
         assertFalse(state3.isSatellitePending)
         assertFalse(state3.isSatelliteFailed)
@@ -857,6 +860,14 @@ class OrbitMathTest {
         // 4. Filament flipUV must be true
         assertTrue("Filament material must declare flipUV : true",
             content.contains("flipUV : true"))
+
+        // 5. VIIRS TrueColor mode must use mapLightingMode and satDayMask transition
+        assertTrue("Shader must declare mapLightingMode parameter",
+            content.contains("name : mapLightingMode"))
+        assertTrue("Shader must contain VIIRS Visual / Realistic path",
+            content.contains("VIIRS TRUECOLOR VISUAL / REALISTIC"))
+        assertTrue("Shader must compute satDayMask across terminator",
+            content.contains("satDayMask = smoothstep(-0.06, 0.06, sunDot)"))
     }
 
     @Test

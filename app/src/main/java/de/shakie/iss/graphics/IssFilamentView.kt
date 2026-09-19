@@ -359,6 +359,7 @@ class IssFilamentView @JvmOverloads constructor(
             instance.setParameter("debugVisualMode", 0.0f)
             instance.setParameter("cloudEncoding", currentCloudEncoding.value)
             instance.setParameter("cloudNoDataMode", currentCloudNoDataMode.value)
+            instance.setParameter("mapLightingMode", config.mapLightingMode.value)
 
             RenderableManager.Builder(1)
                 .boundingBox(Box(0f, 0f, 0f, 11f, 11f, 11f))
@@ -541,6 +542,7 @@ class IssFilamentView @JvmOverloads constructor(
 
         earthMaterialInstance?.setParameter("showClouds", if (config.showClouds) 1.0f else 0.0f)
         earthMaterialInstance?.setParameter("isReferenceMode", if (config.isReferenceMode) 1.0f else 0.0f)
+        earthMaterialInstance?.setParameter("mapLightingMode", config.mapLightingMode.value)
 
         // Effective borders: 0 in reference mode, otherwise user preference
         showBorders = if (config.showBorders) 1.0f else 0.0f
@@ -560,7 +562,7 @@ class IssFilamentView @JvmOverloads constructor(
         view.bloomOptions = bloomOpts
 
         view.colorGrading = if (config.isReferenceMode) referenceColorGrading else standardColorGrading
-        Log.i("IssFilamentView", "Applied effective state: source=${config.activeTextureSource}, showClouds=${config.showClouds}, showBorders=$showBorders, ref=${config.isReferenceMode}, label='${config.statusLabel}'")
+        Log.i("IssFilamentView", "Applied effective state: source=${config.activeTextureSource}, lightingMode=${config.mapLightingMode}, showClouds=${config.showClouds}, showBorders=$showBorders, ref=${config.isReferenceMode}, label='${config.statusLabel}'")
     }
 
     fun setMapMode(useSatellite: Boolean) {
