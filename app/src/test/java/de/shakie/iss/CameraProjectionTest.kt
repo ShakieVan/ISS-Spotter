@@ -278,11 +278,11 @@ class CameraProjectionTest {
         assertEquals(-2f, v0[1], 1e-4f)
         assertEquals(-3f, v0[2], 1e-4f)
 
-        // ROTATION_90 (Landscape right): xDisp = yd, yDisp = -xd
-        // Xv = yd = 2, Yv = -yDisp = xd = 1, Zv = -zd = -3
+        // ROTATION_90: display right points toward -device Y, display up toward +device X.
+        // Canvas Y points down: Xv = -yd, Yv = -xd, Zv = -zd.
         val v90 = CameraProjector.deviceToViewFrame(devVec, Surface.ROTATION_90)
-        assertEquals(2f, v90[0], 1e-4f)
-        assertEquals(1f, v90[1], 1e-4f)
+        assertEquals(-2f, v90[0], 1e-4f)
+        assertEquals(-1f, v90[1], 1e-4f)
         assertEquals(-3f, v90[2], 1e-4f)
     }
 }

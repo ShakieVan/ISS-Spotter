@@ -54,7 +54,7 @@
                 android:textSize="12sp"
                 android:visibility="gone" />
 
-            <!-- Aufklappmenü Panel für Ebenen und Diagnose -->
+            <!-- Aufklappmenü für Ansicht und Ebenen -->
             <LinearLayout
                 android:id="@+id/layoutViewOptionsMenu"
                 android:layout_width="wrap_content"
@@ -72,7 +72,7 @@
                     android:layout_marginBottom="8dp"
                     android:layout_marginEnd="4dp"
                     android:fontFamily="monospace"
-                    android:text="EBENEN &amp; DIAGNOSE"
+                    android:text="ANSICHT &amp; EBENEN"
                     android:textColor="#8FAEC8"
                     android:textSize="10sp"
                     android:textStyle="bold" />
@@ -88,21 +88,6 @@
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
                     android:text="🌍 Karte: Blue Marble"
-                    android:textAllCaps="false"
-                    android:textColor="@color/cyan_accent"
-                    android:textSize="11sp" />
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnToggleClouds"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginBottom="6dp"
-                    android:minHeight="0dp"
-                    android:minWidth="0dp"
-                    android:background="@drawable/bg_hud_button"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="☁️ Wolken: AN"
                     android:textAllCaps="false"
                     android:textColor="@color/cyan_accent"
                     android:textSize="11sp" />
@@ -133,20 +118,6 @@
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
                     android:text="🎯 Bodenpunkt: AUS"
-                    android:textAllCaps="false"
-                    android:textColor="@color/cyan_accent"
-                    android:textSize="11sp" />
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnToggleNormalAnalysis"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:minHeight="0dp"
-                    android:minWidth="0dp"
-                    android:background="@drawable/bg_hud_button"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="🔬 Normalenanalyse: AUS"
                     android:textAllCaps="false"
                     android:textColor="@color/cyan_accent"
                     android:textSize="11sp" />

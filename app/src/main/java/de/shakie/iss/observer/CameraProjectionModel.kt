@@ -115,16 +115,16 @@ object CameraProjector {
         val yDisp: Float
         when (displayRotation) {
             Surface.ROTATION_90 -> {
-                xDisp = yd
-                yDisp = -xd
+                xDisp = -yd
+                yDisp = xd
             }
             Surface.ROTATION_180 -> {
                 xDisp = -xd
                 yDisp = -yd
             }
             Surface.ROTATION_270 -> {
-                xDisp = -yd
-                yDisp = xd
+                xDisp = yd
+                yDisp = -xd
             }
             else -> { // ROTATION_0 (Portrait)
                 xDisp = xd
@@ -151,7 +151,7 @@ object CameraProjector {
         viewWidth: Float,
         viewHeight: Float
     ): Pair<Float, Float> {
-        val zoom = data.currentZoomRatio.coerceAtLeast(1.0f)
+        val zoom = data.currentZoomRatio.coerceAtLeast(0.01f)
 
         if (data.calibrationAccuracy == CalibrationAccuracy.VIRTUAL_SKY ||
             data.focalLengthMm == null || data.sensorPhysicalSize == null
@@ -173,9 +173,10 @@ object CameraProjector {
         val camFovH = 2f * atan(physH / (2f * fMm))
 
         // When device is in portrait (sensorOrientation = 90 or 270):
-        val isPortrait = (data.displayRotation == Surface.ROTATION_0 || data.displayRotation == Surface.ROTATION_180)
-        val sensorFovX = if (isPortrait) camFovH else camFovW
-        val sensorFovY = if (isPortrait) camFovW else camFovH
+        val relativeRotation = (data.sensorOrientation - data.displayRotation * 90 + 360) % 360
+        val swapAxes = relativeRotation == 90 || relativeRotation == 270
+        val sensorFovX = if (swapAxes) camFovH else camFovW
+        val sensorFovY = if (swapAxes) camFovW else camFovH
 
         // PreviewView with fillCenter uniform scale:
         val sensorAspect = tan(sensorFovX / 2f) / tan(sensorFovY / 2f)
@@ -224,82 +225,14 @@ object CameraProjector {
 
         val isBehindCamera = zv <= 0.001f
 
-        // 4. If CameraX sensorToViewTransform is available and calibrated:
-        if (!isBehindCamera && data.sensorToViewTransform != null &&
-            data.activeArraySize != null && data.calibrationAccuracy != CalibrationAccuracy.VIRTUAL_SKY
-        ) {
-            val activeW = data.activeArraySize.width().toFloat()
-            val activeH = data.activeArraySize.height().toFloat()
-            val cx = data.activeArraySize.left + activeW / 2f
-            val cy = data.activeArraySize.top + activeH / 2f
-
-            val fx: Float
-            val fy: Float
-            if (data.intrinsicCalibration != null && data.intrinsicCalibration.size >= 4) {
-                fx = data.intrinsicCalibration[0]
-                fy = data.intrinsicCalibration[1]
-            } else if (data.focalLengthMm != null && data.sensorPhysicalSize != null) {
-                fx = data.focalLengthMm * (activeW / data.sensorPhysicalSize.width)
-                fy = data.focalLengthMm * (activeH / data.sensorPhysicalSize.height)
-            } else {
-                fx = activeW
-                fy = activeH
-            }
-
-            // Transform view ray into sensor optical coordinates (accounting for sensor orientation)
-            val xCam: Float
-            val yCam: Float
-            when ((data.sensorOrientation - (data.displayRotation * 90) + 360) % 360) {
-                90 -> {
-                    xCam = -yv
-                    yCam = xv
-                }
-                270 -> {
-                    xCam = yv
-                    yCam = -xv
-                }
-                180 -> {
-                    xCam = -xv
-                    yCam = -yv
-                }
-                else -> {
-                    xCam = xv
-                    yCam = yv
-                }
-            }
-
-            val sensorX = cx + fx * (xCam / zv)
-            val sensorY = cy + fy * (yCam / zv)
-
-            val srcPts = floatArrayOf(sensorX, sensorY)
-            val dstPts = floatArrayOf(0f, 0f)
-            data.sensorToViewTransform.mapPoints(dstPts, srcPts)
-
-            val screenX = dstPts[0]
-            val screenY = dstPts[1]
-            val isInView = !isBehindCamera && (screenX in 0f..w) && (screenY in 0f..h)
-            val offscreenAngle = Math.toDegrees(atan2(screenY - centerY, screenX - centerX).toDouble()).toFloat()
-
-            return ProjectedPoint(
-                screenX = screenX,
-                screenY = screenY,
-                isBehindCamera = isBehindCamera,
-                isInViewBounds = isInView,
-                rayCameraX = xv,
-                rayCameraY = yv,
-                rayCameraZ = zv,
-                offscreenBearingDeg = offscreenAngle
-            )
-        }
-
-        // 5. Perspective projection using effective view focal lengths (Virtual Sky or Direct Camera View)
-        val (fxView, fyView) = computeEffectiveFocalLengths(data, w, h)
+        // Use one calibrated/approximate pixel projection for targets and horizon.
+        val projection = screenProjection(data, w, h)
 
         val screenX: Float
         val screenY: Float
         if (!isBehindCamera) {
-            screenX = centerX + (xv / zv) * fxView
-            screenY = centerY + (yv / zv) * fyView
+            screenX = projection.cx + projection.xx * (xv / zv) + projection.xy * (yv / zv)
+            screenY = projection.cy + projection.yx * (xv / zv) + projection.yy * (yv / zv)
         } else {
             // Target behind camera: project along transverse direction (xv, yv) for edge pointing
             val r = sqrt(xv * xv + yv * yv)
@@ -337,8 +270,6 @@ object CameraProjector {
     ): HorizonLineData {
         val w = data.viewWidth.toFloat().coerceAtLeast(1f)
         val h = data.viewHeight.toFloat().coerceAtLeast(1f)
-        val centerX = w / 2f
-        val centerY = h / 2f
 
         // Up vector (Zenith: 0, 0, 1) in world ENU:
         val zenithWorld = floatArrayOf(0f, 0f, 1f)
@@ -349,40 +280,84 @@ object CameraProjector {
         val ny = zenithView[1]
         val nz = zenithView[2]
 
-        val (fx, fy) = computeEffectiveFocalLengths(data, w, h)
-
-        val a = nx / fx
-        val b = ny / fy
-        val c = nz
-
+        val projection = screenProjection(data, w, h)
+        val determinant = projection.xx * projection.yy - projection.xy * projection.yx
         val rollDeg = Math.toDegrees(atan2(nx.toDouble(), -ny.toDouble())).toFloat()
-
-        if (abs(a) < 1e-6f && abs(b) < 1e-6f) {
-            return HorizonLineData(isVisible = false, 0f, 0f, 0f, 0f, rollDeg)
+        if (abs(determinant) < 1e-6f) {
+            return HorizonLineData(false, 0f, 0f, 0f, 0f, rollDeg)
         }
 
-        val (u1, v1, u2, v2) = if (abs(b) > 1e-6f) {
-            val startU = -w * 0.5f
-            val endU = w * 1.5f
-            val startV = centerY - (a * (startU - centerX) + c) / b
-            val endV = centerY - (a * (endU - centerX) + c) / b
-            floatArrayOf(startU, startV, endU, endV)
-        } else {
-            // Near-vertical horizon line
-            val u = centerX - c / a
-            floatArrayOf(u, -h * 0.5f, u, h * 1.5f)
+        // n dot ray = 0, transformed through the SAME pixel projection as the ISS.
+        val a = (nx * projection.yy - ny * projection.yx) / determinant
+        val b = (ny * projection.xx - nx * projection.xy) / determinant
+        val c = nz - a * projection.cx - b * projection.cy
+        val intersections = mutableListOf<Pair<Float, Float>>()
+        fun addPoint(x: Float, y: Float) {
+            if (x.isFinite() && y.isFinite() && x in -0.01f..(w + 0.01f) && y in -0.01f..(h + 0.01f) &&
+                intersections.none { abs(it.first - x) < 0.01f && abs(it.second - y) < 0.01f }) {
+                intersections.add(x.coerceIn(0f, w) to y.coerceIn(0f, h))
+            }
         }
+        if (abs(b) > 1e-8f) {
+            addPoint(0f, -c / b)
+            addPoint(w, -(a * w + c) / b)
+        }
+        if (abs(a) > 1e-8f) {
+            addPoint(-c / a, 0f)
+            addPoint(-(b * h + c) / a, h)
+        }
+        if (intersections.size < 2) return HorizonLineData(false, 0f, 0f, 0f, 0f, rollDeg)
+        val first = intersections[0]
+        val last = intersections[1]
+        return HorizonLineData(true, first.first, first.second, last.first, last.second, rollDeg)
+    }
 
-        val isVisible = (v1 in -h..2f * h || v2 in -h..2f * h || u1 in -w..2f * w)
+    private data class ScreenProjection(
+        val cx: Float, val cy: Float,
+        val xx: Float, val xy: Float, val yx: Float, val yy: Float
+    )
 
-        return HorizonLineData(
-            isVisible = isVisible,
-            startX = u1,
-            startY = v1,
-            endX = u2,
-            endY = v2,
-            rollDeg = rollDeg
-        )
+    /**
+     * Sensor-to-view is supplied by CameraX (rotation, crop and fillCenter).
+     * Convert a VIEW ray back to native sensor axes, not in the opposite direction.
+     * Intrinsics passed here must refer to the same active pixel grid as the transform.
+     * No extra zoom is applied on this path: that would duplicate CameraX's transform.
+     */
+    private fun screenProjection(data: CameraProjectionData, w: Float, h: Float): ScreenProjection {
+        val transform = data.sensorToViewTransform
+        val active = data.activeArraySize
+        val k = data.intrinsicCalibration
+        val hasIntrinsics = k != null && k.size >= 4 && k.take(4).all { it.isFinite() } && k[0] > 0f && k[1] > 0f
+        val focal = data.focalLengthMm
+        val size = data.sensorPhysicalSize
+        val hasFocal = focal != null && focal.isFinite() && focal > 0f && size != null && size.width > 0f && size.height > 0f
+        if (data.calibrationAccuracy != CalibrationAccuracy.VIRTUAL_SKY && transform != null &&
+            active != null && active.width() > 0 && active.height() > 0 && (hasIntrinsics || hasFocal)) {
+            val fx = if (hasIntrinsics) k!![0] else focal!! * active.width() / size!!.width
+            val fy = if (hasIntrinsics) k!![1] else focal!! * active.height() / size!!.height
+            val cx = if (hasIntrinsics) active.left + k!![2] else active.left + active.width() / 2f
+            val cy = if (hasIntrinsics) active.top + k!![3] else active.top + active.height() / 2f
+            val skew = if (hasIntrinsics && k!!.size >= 5 && k[4].isFinite()) k[4] else 0f
+            val angle = Math.toRadians(((data.sensorOrientation - data.displayRotation * 90 + 360) % 360).toDouble())
+            val co = cos(angle).toFloat()
+            val si = sin(angle).toFloat()
+            // Inverse of the clockwise sensor-image rotation. For 90 degrees: (y, -x).
+            fun sensorPoint(x: Float, y: Float): Pair<Float, Float> {
+                val sx = co * x + si * y
+                val sy = -si * x + co * y
+                return (cx + fx * sx + skew * sy) to (cy + fy * sy)
+            }
+            val px = sensorPoint(1f, 0f)
+            val py = sensorPoint(0f, 1f)
+            val points = floatArrayOf(cx, cy, px.first, px.second, py.first, py.second)
+            transform.mapPoints(points)
+            if (points.all { it.isFinite() }) {
+                return ScreenProjection(points[0], points[1], points[2] - points[0], points[4] - points[0],
+                    points[3] - points[1], points[5] - points[1])
+            }
+        }
+        val (fx, fy) = computeEffectiveFocalLengths(data, w, h)
+        return ScreenProjection(w / 2f, h / 2f, fx, 0f, 0f, fy)
     }
 
     /**

@@ -49,8 +49,6 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
 
     private var currentOrientation = DeviceOrientation(0f, 0f, 0f, FloatArray(16))
     private var bordersVisible = true
-    private var cloudsVisible = true
-    private var normalAnalysisEnabled = false
     private var isObserverMode = false
     private var locationListener: LocationListener? = null
 
@@ -82,14 +80,13 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 arCameraManager?.forcedZoomRatio = null
                 binding.filamentView.setReferenceMode(false)
                 binding.globeOverlayView.diagnosticMarkersVisible = false
-                normalAnalysisEnabled = false
                 binding.filamentView.setDebugVisualMode(0)
                 binding.filamentView.setCloudDataSourceConfig(
                     CloudEncoding.GRAYSCALE_MASK,
                     CloudNoDataMode.NODATA_NONE
                 )
                 updateGroundMarkerButtonText()
-                updateNormalAnalysisButtonText()
+                updateMapSourceButtonText()
                 Log.i("MainActivity", "Debug: reset camera, time, sun, reference mode, diagnostics, and clouds")
                 return
             }
@@ -109,9 +106,8 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 debugFreeze = intent.getBooleanExtra("freeze", false)
             }
             if (intent.hasExtra("clouds")) {
-                cloudsVisible = intent.getBooleanExtra("clouds", true)
-                binding.filamentView.setCloudVisibility(cloudsVisible)
-                updateCloudButtonText()
+                binding.filamentView.setCloudVisibility(intent.getBooleanExtra("clouds", true))
+                updateMapSourceButtonText()
             }
             if (intent.hasExtra("borders")) {
                 bordersVisible = intent.getBooleanExtra("borders", true)
@@ -136,9 +132,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             }
             if (intent.hasExtra("visual_mode")) {
                 val mode = intent.getIntExtra("visual_mode", 0)
-                normalAnalysisEnabled = (mode == 1)
                 binding.filamentView.setDebugVisualMode(mode)
-                updateNormalAnalysisButtonText()
             }
             if (intent.hasExtra("cloud_encoding")) {
                 val encVal = intent.getFloatExtra("cloud_encoding", 0f)
@@ -220,9 +214,19 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             setupLocationUpdates()
         }
         if (permissions[Manifest.permission.CAMERA] == true) {
-            if (isObserverMode && !binding.calloutOverlayView.showVirtualSky) {
+            if (isObserverMode) {
+                binding.calloutOverlayView.showVirtualSky = false
+                binding.cameraPreview.visibility = View.VISIBLE
+                binding.btnToggleSkyMode.text = "✦ Sternenhimmel"
                 startCameraPreview()
             }
+        } else if (permissions.containsKey(Manifest.permission.CAMERA) && isObserverMode) {
+            binding.calloutOverlayView.showVirtualSky = true
+            binding.cameraPreview.visibility = View.GONE
+            binding.btnToggleSkyMode.text = "✦ AR-Kamera"
+            binding.calloutOverlayView.setCameraProjectionData(
+                CameraProjectionData(calibrationAccuracy = CalibrationAccuracy.VIRTUAL_SKY)
+            )
         }
     }
 
@@ -275,36 +279,19 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             switchToObserverMode()
         }
 
-        // Toggle Map Source: Blue Marble -> Satellit (Simulation) -> Satellit (Referenz Unlit) -> Blue Marble
+        // One selection for Karte -> Wolken aus -> Satellit -> Referenz.
         updateMapSourceButtonText()
         binding.btnToggleMapSource.setOnClickListener {
-            val req = binding.filamentView.requestedMapSource
-            val isRef = binding.filamentView.isReferenceMode
-            when {
-                req == MapSourcePreference.BLUE_MARBLE -> {
-                    // Switch from Blue Marble to Satellit (Simulation)
-                    binding.filamentView.setReferenceMode(false)
-                    binding.filamentView.setMapMode(true)
-                }
-                req == MapSourcePreference.SATELLITE && !isRef -> {
-                    // Switch from Satellit (Simulation) to Satellit (Referenz Unlit)
-                    binding.filamentView.setReferenceMode(true)
-                }
-                else -> {
-                    // Switch from Satellit (Referenz) back to Blue Marble
-                    binding.filamentView.setReferenceMode(false)
-                    binding.filamentView.setMapMode(false)
-                }
-            }
+            val globe = binding.filamentView
+            val next = OrbitViewMode.fromState(
+                globe.requestedMapSource, globe.userCloudPreference, globe.isReferenceMode
+            ).next()
+            // All setters run on the UI thread before the next render frame.
+            globe.setReferenceMode(next.reference)
+            globe.setCloudVisibility(next.clouds)
+            globe.setMapMode(next.source == MapSourcePreference.SATELLITE)
+            globe.setDebugVisualMode(0)
             updateMapSourceButtonText()
-        }
-
-        // Toggle live cloud layer
-        updateCloudButtonText()
-        binding.btnToggleClouds.setOnClickListener {
-            val next = !binding.filamentView.userCloudPreference
-            binding.filamentView.setCloudVisibility(next)
-            updateCloudButtonText()
         }
 
         // Toggle country borders & names (Short-click: toggle borders, Long-click: toggle diagnostic markers)
@@ -337,14 +324,6 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             binding.globeOverlayView.diagnosticMarkersVisible = next
             binding.globeOverlayView.postInvalidateOnAnimation()
             updateGroundMarkerButtonText()
-        }
-
-        // Toggle Shader-Normalenanalyse
-        updateNormalAnalysisButtonText()
-        binding.btnToggleNormalAnalysis.setOnClickListener {
-            normalAnalysisEnabled = !normalAnalysisEnabled
-            binding.filamentView.setDebugVisualMode(if (normalAnalysisEnabled) 1 else 0)
-            updateNormalAnalysisButtonText()
         }
 
         // Live camera pose sync to 2D vector country labels overlay & optical lens flare
@@ -436,32 +415,6 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         }
     }
 
-    private fun updateCloudButtonText() {
-        val config = binding.filamentView.currentConfiguration
-        if (config.activeTextureSource == EffectiveTextureSource.SATELLITE_VIIRS) {
-            binding.btnToggleClouds.isEnabled = false
-            binding.btnToggleClouds.alpha = 0.5f
-            binding.btnToggleClouds.text = "☁️ Wolken: Im Satellitenbild"
-            return
-        }
-        if (config.isReferenceMode) {
-            binding.btnToggleClouds.isEnabled = false
-            binding.btnToggleClouds.alpha = 0.5f
-            binding.btnToggleClouds.text = "☁️ Wolken: Unlit Referenz"
-            return
-        }
-
-        binding.btnToggleClouds.isEnabled = true
-        binding.btnToggleClouds.alpha = 1.0f
-        if (!binding.filamentView.userCloudPreference) {
-            binding.btnToggleClouds.text = "☁️ Wolken: AUS"
-        } else {
-            val isLive = cloudDownloader.isLive
-            val meta = cloudDownloader.metadataFlow.value
-            binding.btnToggleClouds.text = if (isLive) "☁️ Wolken: AN (${meta.provider})" else "☁️ Wolken: AN (💾 Archiv)"
-        }
-    }
-
     private fun updateMapSourceButtonText() {
         val config = binding.filamentView.currentConfiguration
         val date = currentSatelliteInfo?.dateUtc ?: "NASA VIIRS"
@@ -482,10 +435,15 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 binding.btnToggleMapSource.text = "🛰️ Satellit: Fehler (Fallback)"
             }
             else -> {
-                binding.btnToggleMapSource.text = "🌍 Karte: Blue Marble"
+                binding.btnToggleMapSource.text = if (config.showClouds)
+                    "🌍 Karte: Blue Marble" else "🌍 Karte: Wolken aus"
             }
         }
-        updateCloudButtonText()
+        val sourceDescription = if (config.showClouds) {
+            "; Wolken: ${cloudDownloader.metadataFlow.value.provider}"
+        } else ""
+        binding.btnToggleMapSource.contentDescription =
+            "${binding.btnToggleMapSource.text}$sourceDescription. Antippen für die nächste Ansicht."
     }
 
     private fun updateBorderButtonText() {
@@ -498,10 +456,6 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         binding.btnToggleGroundMarker.text = if (visible) "🎯 Bodenpunkt: AN" else "🎯 Bodenpunkt: AUS"
     }
 
-    private fun updateNormalAnalysisButtonText() {
-        binding.btnToggleNormalAnalysis.text = if (normalAnalysisEnabled) "🔬 Normalenanalyse: AN" else "🔬 Normalenanalyse: AUS"
-    }
-
     private fun setupCloudSync() {
         lifecycleScope.launch {
             cloudDownloader.cloudUpdateFlow.collectLatest { file ->
@@ -510,18 +464,18 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                     CloudEncoding.GRAYSCALE_MASK,
                     CloudNoDataMode.NODATA_NONE
                 )
-                updateCloudButtonText()
+                updateMapSourceButtonText()
             }
         }
         lifecycleScope.launch {
             cloudDownloader.isLiveFlow.collectLatest {
-                updateCloudButtonText()
+                updateMapSourceButtonText()
             }
         }
         lifecycleScope.launch {
             cloudDownloader.metadataFlow.collectLatest { meta ->
                 Log.i("MainActivity", "Live cloud metadata updated: provider=${meta.provider}, dims=${meta.dimensions}, cache=${meta.cacheFileName}, obs=${meta.observationTime}")
-                updateCloudButtonText()
+                updateMapSourceButtonText()
             }
         }
     }
@@ -627,7 +581,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             }.apply {
                 onProjectionDataChanged = { projData ->
                     runOnUiThread {
-                        binding.calloutOverlayView.setCameraProjectionData(projData)
+                        if (isObserverMode && !binding.calloutOverlayView.showVirtualSky) {
+                            binding.calloutOverlayView.setCameraProjectionData(projData)
+                        }
                     }
                 }
             }
@@ -728,6 +684,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         if (!isObserverMode) {
             binding.filamentView.setSnapshot(effSnapshot)
         } else {
+            if (!binding.calloutOverlayView.showVirtualSky) {
+                arCameraManager?.refreshPreviewTransform()
+            }
             binding.calloutOverlayView.updateData(orient, effSnapshot)
         }
 
