@@ -1,125 +1,76 @@
 package de.shakie.iss.graphics
+
 import kotlin.math.*
 
 class OrbitCameraController {
+    var yawOffsetDeg: Float = 0f
+    var pitchOffsetDeg: Float = 0f
+    // 1 = scale-correct close-up, MAX_ZOOM = complete globe at 48% viewport width.
+    // A logarithmic distance curve covers metres to tens of thousands of kilometres.
+    var zoomFactor: Float = 1f
+        set(value) { if (value.isFinite()) field = value.coerceIn(MIN_ZOOM, MAX_ZOOM) }
+    var viewportAspect: Float = 0.56f
+        set(value) { if (value.isFinite() && value > 0f) field = value.coerceIn(0.2f, 4f) }
 
-    // User touch offsets (for free look-around)
-    var yawOffsetDeg: Float = 0.0f
-    var pitchOffsetDeg: Float = 0.0f
-    var zoomFactor: Float = 1.0f
+    fun isModified() = abs(yawOffsetDeg % 360f) > 0.5f || abs(pitchOffsetDeg) > 0.5f || abs(zoomFactor - 1f) > 0.02f
 
-    /**
-     * Checks whether the camera view has been modified by user gestures from default.
-     */
-    fun isModified(): Boolean {
-        return abs(yawOffsetDeg) > 0.5f || abs(pitchOffsetDeg) > 0.5f || abs(zoomFactor - 1.0f) > 0.05f
+    fun defaultDistance(): Double {
+        val tanH = tan(Math.toRadians(OrbitScale.FOV_Y_DEG / 2.0)) * viewportAspect
+        return OrbitScale.ISS_WORLD_SPAN / (2.0 * tanH * 0.24)
     }
 
-    /**
-     * Computes camera position, look-at target, and camera up vector.
-     * In default state (yaw=0, pitch=0), camera is placed above/behind the ISS looking down
-     * at the Earth directly below the ISS with the ISS positioned in the lower half of the screen.
-     * When user rotates or zooms, camera freely pivots around the ISS.
-     *
-     * @param issPos 3D coordinate of ISS in world space (Earth at 0,0,0)
-     * @param observerPos 3D coordinate of Observer on Earth surface
-     * @return 9-element array: [eyeX, eyeY, eyeZ, targetX, targetY, targetZ, upX, upY, upZ]
-     */
-    fun computeCameraPose(
-        issPos: FloatArray,
-        observerPos: FloatArray
-    ): FloatArray {
-        val issDist = sqrt(issPos[0] * issPos[0] + issPos[1] * issPos[1] + issPos[2] * issPos[2]).coerceAtLeast(0.001f)
-        val upIss = floatArrayOf(issPos[0] / issDist, issPos[1] / issDist, issPos[2] / issDist)
-        val nadir = floatArrayOf(-upIss[0], -upIss[1], -upIss[2])
+    fun cameraDistance(): Double {
+        val close = defaultDistance()
+        if (zoomFactor <= 1f) return close * zoomFactor
+        val end = OrbitScale.earthOverviewDistance(viewportAspect.toDouble())
+        val t = ((zoomFactor - 1f) / (MAX_ZOOM - 1f)).toDouble()
+        return close * exp(ln(end / close) * t)
+    }
 
-        // 1. Compute North tangent on Earth sphere at ISS position
-        val dotN = upIss[1] // Projection of North pole (0, 1, 0)
-        val northX = -upIss[0] * dotN
-        val northY = 1.0f - upIss[1] * dotN
-        val northZ = -upIss[2] * dotN
-        val northLen = sqrt(northX * northX + northY * northY + northZ * northZ)
-        val northTangent = if (northLen > 0.01f) {
-            floatArrayOf(northX / northLen, northY / northLen, northZ / northLen)
-        } else {
-            floatArrayOf(0f, 0f, 1f)
+    @Suppress("UNUSED_PARAMETER")
+    fun computeCameraPose(issPos: FloatArray, observerPos: FloatArray): FloatArray {
+        val iss = OrbitVector.from(issPos)
+        val radial = iss.unit(OrbitVector.X)
+        val nadir = radial * -1.0
+        val north = (OrbitVector.Y - radial * radial.y).unit(OrbitVector.Z)
+        val east = north.cross(radial).unit(OrbitVector.Z * -1.0)
+        // At real ISS altitude the limb is about 70 degrees from nadir.
+        val tilt = Math.toRadians(58.0)
+        val baseForward = nadir * cos(tilt) + north * sin(tilt)
+        val baseUp = north * cos(tilt) - nadir * sin(tilt)
+        val yaw = Math.toRadians(yawOffsetDeg.toDouble())
+        val pitch = Math.toRadians(pitchOffsetDeg.coerceIn(-85f, 85f).toDouble())
+        val fYaw = baseForward * cos(yaw) - east * sin(yaw)
+        var forward = (fYaw * cos(pitch) + baseUp * sin(pitch)).unit()
+        var up = northUp(forward, baseUp)
+        val distance = cameraDistance()
+        // Recenter on Earth before distant viewpoints; a fixed ISS framing would lose the globe.
+        val transition = ((ln(distance / 0.03) / ln(20.0 / 0.03))).coerceIn(0.0, 1.0)
+        val blend = transition * transition * (3.0 - 2.0 * transition)
+        val anchor = iss * (1.0 - blend)
+        var eye = anchor - forward * distance + up * (distance * 0.16 * (1.0 - blend))
+        val minimumRadius = OrbitScale.EARTH_RADIUS + OrbitScale.metersToWorld(150.0)
+        if (eye.length() < minimumRadius) {
+            // Do not let free-orbit gestures move the camera through the Earth.
+            eye = eye.unit(radial) * minimumRadius
+            forward = (anchor - eye).unit(forward)
+            up = northUp(forward, baseUp)
         }
-
-        // East tangent = cross(northTangent, upIss) on standard Earth sphere where East is -Z
-        val eastTangent = floatArrayOf(
-            northTangent[1] * upIss[2] - northTangent[2] * upIss[1],
-            northTangent[2] * upIss[0] - northTangent[0] * upIss[2],
-            northTangent[0] * upIss[1] - northTangent[1] * upIss[0]
-        )
-
-        // 2. Base Forward, Up & Right aligned strictly to North (North is always screen UP)
-        val defaultTiltRad = Math.toRadians(32.0).toFloat()
-        // Tilt from nadir towards north horizon so Earth occupies the lower 2/3 of the screen
-        val baseForward = floatArrayOf(
-            nadir[0] * cos(defaultTiltRad) + northTangent[0] * sin(defaultTiltRad),
-            nadir[1] * cos(defaultTiltRad) + northTangent[1] * sin(defaultTiltRad),
-            nadir[2] * cos(defaultTiltRad) + northTangent[2] * sin(defaultTiltRad)
-        )
-        val baseUp = floatArrayOf(
-            northTangent[0] * cos(defaultTiltRad) - nadir[0] * sin(defaultTiltRad),
-            northTangent[1] * cos(defaultTiltRad) - nadir[1] * sin(defaultTiltRad),
-            northTangent[2] * cos(defaultTiltRad) - nadir[2] * sin(defaultTiltRad)
-        )
-        val baseRight = eastTangent
-
-        // 3. Apply user look-around rotations (Yaw around baseUp, Pitch around rotated right)
-        val yawRad = Math.toRadians(yawOffsetDeg.toDouble()).toFloat()
-        val cosY = cos(yawRad)
-        val sinY = sin(yawRad)
-
-        // Rotate baseForward and baseRight around baseUp
-        val fYaw = floatArrayOf(
-            baseForward[0] * cosY - baseRight[0] * sinY,
-            baseForward[1] * cosY - baseRight[1] * sinY,
-            baseForward[2] * cosY - baseRight[2] * sinY
-        )
-        val rYaw = floatArrayOf(
-            baseRight[0] * cosY + baseForward[0] * sinY,
-            baseRight[1] * cosY + baseForward[1] * sinY,
-            baseRight[2] * cosY + baseForward[2] * sinY
-        )
-        val uYaw = baseUp
-
-        // Pitch around rYaw
-        val pitchRad = Math.toRadians(pitchOffsetDeg.toDouble()).toFloat()
-        val cosP = cos(pitchRad)
-        val sinP = sin(pitchRad)
-
-        val forward = floatArrayOf(
-            fYaw[0] * cosP + uYaw[0] * sinP,
-            fYaw[1] * cosP + uYaw[1] * sinP,
-            fYaw[2] * cosP + uYaw[2] * sinP
-        )
-        val camUp = floatArrayOf(
-            uYaw[0] * cosP - fYaw[0] * sinP,
-            uYaw[1] * cosP - fYaw[1] * sinP,
-            uYaw[2] * cosP - fYaw[2] * sinP
-        )
-
-        // 4. Camera placement behind the ISS
-        val camDist = 1.35f * zoomFactor
-        val camShift = 0.28f * zoomFactor
-
-        val eyeX = issPos[0] - forward[0] * camDist + camUp[0] * camShift
-        val eyeY = issPos[1] - forward[1] * camDist + camUp[1] * camShift
-        val eyeZ = issPos[2] - forward[2] * camDist + camUp[2] * camShift
-
-        // Look-at target: Along forward direction towards Earth
-        val targetX = eyeX + forward[0] * 3.0f
-        val targetY = eyeY + forward[1] * 3.0f
-        val targetZ = eyeZ + forward[2] * 3.0f
-
-        return floatArrayOf(eyeX, eyeY, eyeZ, targetX, targetY, targetZ, camUp[0], camUp[1], camUp[2])
+        // A unit-length look vector avoids loss of precision at the scale-correct near distance.
+        val target = eye + forward
+        return eye.floats() + target.floats() + up.floats()
     }
 
-    fun reset() {
-        yawOffsetDeg = 0.0f
-        pitchOffsetDeg = 0.0f
-        zoomFactor = 1.0f
+    private fun northUp(forward: OrbitVector, fallback: OrbitVector): OrbitVector {
+        val projected = OrbitVector.Y - forward * forward.y
+        return if (projected.length() > 1e-5) projected.unit()
+            else (fallback - forward * fallback.dot(forward)).unit(OrbitVector.Z)
+    }
+
+    fun reset() { yawOffsetDeg = 0f; pitchOffsetDeg = 0f; zoomFactor = 1f }
+
+    companion object {
+        const val MIN_ZOOM = 0.35f
+        const val MAX_ZOOM = 12f
     }
 }

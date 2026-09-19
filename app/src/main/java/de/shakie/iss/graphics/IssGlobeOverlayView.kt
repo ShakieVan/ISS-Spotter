@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import de.shakie.iss.astronomy.CelestialCatalog
+import de.shakie.iss.orbit.IssSnapshot
 import kotlin.math.*
 
 class IssGlobeOverlayView @JvmOverloads constructor(
@@ -39,6 +40,14 @@ class IssGlobeOverlayView @JvmOverloads constructor(
     private val drawnY = FloatArray(64)
 
     private val density = resources.displayMetrics.density
+    private val trajectoryPainter = TrajectoryPainter(density)
+    private var orbitSnapshot: IssSnapshot? = null
+    var trajectoryVisible: Boolean = true
+        set(value) { field = value; postInvalidateOnAnimation() }
+
+    fun setOrbitSnapshot(snapshot: IssSnapshot) {
+        orbitSnapshot = snapshot
+    }
 
     // Paints
     private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -233,7 +242,7 @@ class IssGlobeOverlayView @JvmOverloads constructor(
 
         // 1. Build View-Projection Matrix
         Matrix.setLookAtM(viewMatrix, 0, eyeX, eyeY, eyeZ, targetX, targetY, targetZ, upX, upY, upZ)
-        Matrix.perspectiveM(projMatrix, 0, fovYDeg, aspect, 0.1f, 150.0f)
+        Matrix.perspectiveM(projMatrix, 0, fovYDeg, aspect, 0.000005f, OrbitScale.FAR_PLANE.toFloat())
         Matrix.multiplyMM(vpMatrix, 0, projMatrix, 0, viewMatrix, 0)
 
         // In reference mode, disable all decorative elements:
@@ -246,6 +255,11 @@ class IssGlobeOverlayView @JvmOverloads constructor(
                 drawDiagnosticMarkers(canvas, eyeX, eyeY, eyeZ, w, h)
             }
             return
+        }
+
+        if (trajectoryVisible) {
+            orbitSnapshot?.let { trajectoryPainter.drawGround(canvas, pose, it) }
+            drawDistantIssMarker(canvas, pose)
         }
 
         // 2. Optical Screen-Space Lens Flare (when Sun is in view and not eclipsed by Earth)
@@ -369,31 +383,17 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         constellationOutlinePaint.textSize = labelTextSize
         constellationOutlinePaint.strokeWidth = 3.2f * density
 
+        val eye = OrbitVector(eyeX.toDouble(), eyeY.toDouble(), eyeZ.toDouble())
+        val time = orbitSnapshot?.timestampMillis ?: return
         for (label in constellationLabels) {
-            // Earth occultation test (Earth is sphere at (0,0,0) with radius 10.0f)
-            val dx = label.x - eyeX
-            val dy = label.y - eyeY
-            val dz = label.z - eyeZ
-            val dist = sqrt(dx * dx + dy * dy + dz * dz).coerceAtLeast(0.001f)
-            val ux = dx / dist
-            val uy = dy / dist
-            val uz = dz / dist
-
-            val tClosest = -(eyeX * ux + eyeY * uy + eyeZ * uz)
-            if (tClosest > 0.0f && tClosest < dist) {
-                val px = eyeX + ux * tClosest
-                val py = eyeY + uy * tClosest
-                val pz = eyeZ + uz * tClosest
-                val distCenterSq = px * px + py * py + pz * pz
-                if (distCenterSq < 10.05f * 10.05f) {
-                    continue // Blocked by Earth globe
-                }
-            }
-
-            worldPos[0] = label.x
-            worldPos[1] = label.y
-            worldPos[2] = label.z
-            worldPos[3] = 1.0f
+            val catalog = OrbitVector(label.x.toDouble(), label.y.toDouble(), label.z.toDouble())
+            val direction = OrbitSky.catalogToWorld(catalog, time).unit()
+            if (OrbitSky.rayBlockedByEarth(eye, direction)) continue
+            val point = eye + direction * 3900.0
+            worldPos[0] = point.x.toFloat()
+            worldPos[1] = point.y.toFloat()
+            worldPos[2] = point.z.toFloat()
+            worldPos[3] = 1f
             Matrix.multiplyMV(clipPos, 0, vpMatrix, 0, worldPos, 0)
             val clipW = clipPos[3]
             if (clipW <= 0.1f) continue
@@ -409,6 +409,32 @@ class IssGlobeOverlayView @JvmOverloads constructor(
             canvas.drawText(formattedText, sx, sy, constellationOutlinePaint)
             canvas.drawText(formattedText, sx, sy, constellationTextPaint)
         }
+    }
+
+    private fun drawDistantIssMarker(canvas: Canvas, pose: FloatArray) {
+        val snapshot = orbitSnapshot ?: return
+        val p = OrbitVector.geographic(snapshot.latitude, snapshot.longitude,
+            OrbitScale.EARTH_RADIUS * (1.0 + snapshot.altitudeKm / OrbitScale.EARTH_RADIUS_KM))
+        val projection = OrbitScreenProjection(pose, width.toDouble(), height.toDouble())
+        val delta = p - projection.eye
+        val distance = delta.length()
+        if (distance < 1e-8) return
+        val pixelSpan = height * 0.5 * OrbitScale.ISS_WORLD_SPAN /
+            (distance * tan(Math.toRadians(OrbitScale.FOV_Y_DEG * 0.5)))
+        if (pixelSpan >= 4.0 * density) return
+        val dir = delta * (1.0 / distance)
+        val t = -projection.eye.dot(dir)
+        if (t in 0.0..distance && (projection.eye + dir * t).length() < OrbitScale.EARTH_RADIUS) return
+        val screen = projection.project(p) ?: return
+        if (screen[0] !in 0.0..width.toDouble() || screen[1] !in 0.0..height.toDouble()) return
+        val x = screen[0].toFloat()
+        val y = screen[1].toFloat()
+        diagFillPaint.color = Color.WHITE
+        diagTextPaint.color = Color.WHITE
+        diagTextPaint.textSize = 11f * density
+        canvas.drawCircle(x, y, 2f * density, diagFillPaint)
+        // A symbolic locator, never an enlarged physical ISS model.
+        canvas.drawText("ISS", x, y - 7f * density, diagTextPaint)
     }
 
     private fun drawDiagnosticMarkers(
@@ -533,10 +559,11 @@ class IssGlobeOverlayView @JvmOverloads constructor(
         // Ray-sphere occultation below determines whether the Sun is visible from the camera's viewpoint
 
         // 1. Physical gradual occultation by Earth sphere
-        val sunDist = 74.0f
-        val sunWorldX = sDir[0] * sunDist
-        val sunWorldY = sDir[1] * sunDist
-        val sunWorldZ = sDir[2] * sunDist
+        // Match the camera-centered distant Sun used by the Filament scene.
+        val sunDist = 3900.0f
+        val sunWorldX = eyeX + sDir[0] * sunDist
+        val sunWorldY = eyeY + sDir[1] * sunDist
+        val sunWorldZ = eyeZ + sDir[2] * sunDist
 
         val toSunX = sunWorldX - eyeX
         val toSunY = sunWorldY - eyeY
@@ -680,7 +707,7 @@ class IssGlobeOverlayView @JvmOverloads constructor(
 
         for (g in ghosts) {
             val gx = sunScreenX + flareDx * g.first
-            val gy = sunScreenY + flareDy * g.second
+            val gy = sunScreenY + flareDy * g.first
             val gr = g.second * density
             flareGhostPaint.color = g.third
             flareGhostPaint.style = Paint.Style.FILL

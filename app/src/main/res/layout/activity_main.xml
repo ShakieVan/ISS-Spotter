@@ -107,6 +107,22 @@
                     android:textColor="@color/cyan_accent"
                     android:textSize="11sp" />
 
+                <de.shakie.iss.graphics.TrajectoryToggleButton
+                    android:id="@+id/btnToggleOrbitTrajectory"
+                    android:tag="orbit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginBottom="6dp"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:background="@drawable/bg_hud_button"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="〰 Flugbahn: AN"
+                    android:textAllCaps="false"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp" />
+
                 <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btnToggleGroundMarker"
                     android:layout_width="wrap_content"
@@ -164,6 +180,24 @@
             android:id="@+id/calloutOverlayView"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+
+        <de.shakie.iss.graphics.TrajectoryToggleButton
+            android:id="@+id/btnToggleObserverTrajectory"
+            android:tag="observer"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:layout_gravity="end|bottom"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="62dp"
+            android:background="@drawable/bg_hud_button"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="〰 Flugbahn: AN"
+            android:textAllCaps="false"
+            android:textColor="@color/cyan_accent"
+            android:textSize="12sp" />
 
         <!-- Floating Control in Observer View -->
         <androidx.appcompat.widget.AppCompatButton

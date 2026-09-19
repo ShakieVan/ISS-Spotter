@@ -6,6 +6,7 @@ import android.util.AttributeSet
 import android.view.View
 import de.shakie.iss.astronomy.SkyRenderer
 import de.shakie.iss.orbit.IssSnapshot
+import de.shakie.iss.graphics.TrajectoryPainter
 import kotlin.math.*
 
 class IssCalloutOverlayView @JvmOverloads constructor(
@@ -15,6 +16,9 @@ class IssCalloutOverlayView @JvmOverloads constructor(
 
     private val starfleetArrow = StarfleetArrowDrawable()
     private val skyRenderer = SkyRenderer()
+    private val trajectoryPainter = TrajectoryPainter(resources.displayMetrics.density)
+    var trajectoryVisible: Boolean = true
+        set(value) { field = value; invalidate() }
 
     // Paints
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -172,6 +176,9 @@ class IssCalloutOverlayView @JvmOverloads constructor(
                 }
             }
         }
+
+        // Same optical projection as the live marker; no screen-fixed or ground-projected AR path.
+        if (trajectoryVisible) trajectoryPainter.drawSky(canvas, snap, orient.rotationMatrix, effectiveProjData)
 
         // 4. Project ISS using unified 3D perspective projector
         val projIss = CameraProjector.projectDirection(

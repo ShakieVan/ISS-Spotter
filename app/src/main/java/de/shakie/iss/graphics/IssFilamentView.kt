@@ -433,7 +433,7 @@ class IssFilamentView @JvmOverloads constructor(
                     }
                     scene.addEntity(entity)
                 }
-                Log.i("IssFilamentView", "Loaded NASA ISS 3D model (filtered debris entities)")
+                Log.i("IssFilamentView", "Loaded NASA ISS: span=${OrbitScale.MODEL_SPAN} model units, scale=${OrbitScale.ISS_MODEL_SCALE}, physical span=${OrbitScale.ISS_SPAN_METERS} m")
             }
         } catch (e: Exception) {
             Log.e("IssFilamentView", "Error loading ISS 3D model: ${e.message}", e)
@@ -577,6 +577,8 @@ class IssFilamentView @JvmOverloads constructor(
 
     fun setSnapshot(snapshot: IssSnapshot) {
         currentSnapshot = snapshot
+        rootView.findViewById<IssGlobeOverlayView>(de.shakie.iss.R.id.globeOverlayView)
+            ?.setOrbitSnapshot(snapshot)
     }
 
     fun setBorderVisibility(visible: Boolean) {
@@ -688,19 +690,27 @@ class IssFilamentView @JvmOverloads constructor(
                 Matrix.setIdentityM(transform, 0)
                 Matrix.translateM(transform, 0, issX, issY, issZ)
 
-                Matrix.scaleM(transform, 0, 0.009f, 0.009f, 0.009f)
+                // Same physical scale as the Earth: 109 m across the displayed solar wings.
+                val modelScale = OrbitScale.ISS_MODEL_SCALE.toFloat()
+                Matrix.scaleM(transform, 0, modelScale, modelScale, modelScale)
                 Matrix.rotateM(transform, 0, Math.toDegrees(issLonRad.toDouble()).toFloat(), 0f, 1f, 0f)
                 Matrix.rotateM(transform, 0, Math.toDegrees(issLatRad.toDouble()).toFloat(), 0f, 0f, 1f)
+                val center = OrbitScale.MODEL_CENTER
+                Matrix.translateM(transform, 0, -center.x.toFloat(), -center.y.toFloat(), -center.z.toFloat())
 
                 tm.setTransform(instance, transform)
             }
         }
 
         // 5. Update Camera Look-At
+        val aspect = viewWidth.toFloat() / viewHeight.coerceAtLeast(1).toFloat()
+        cameraController.viewportAspect = aspect
         val camPose = cameraController.computeCameraPose(issPos, obsPos)
         atmosphereMaterialInstance?.setParameter("cameraPosition", camPose[0], camPose[1], camPose[2])
-        val aspect = viewWidth.toFloat() / viewHeight.coerceAtLeast(1).toFloat()
-        camera.setProjection(42.0, aspect.toDouble(), 0.1, 150.0, Camera.Fov.VERTICAL)
+        val eye = OrbitVector.from(camPose)
+        val near = OrbitScale.nearPlane((eye - OrbitVector.from(issPos)).length())
+        camera.setProjection(OrbitScale.FOV_Y_DEG, aspect.toDouble(), near, OrbitScale.FAR_PLANE, Camera.Fov.VERTICAL)
+        updateCelestialTransforms(snapshot.timestampMillis, eye)
         camera.lookAt(
             camPose[0].toDouble(), camPose[1].toDouble(), camPose[2].toDouble(),
             camPose[3].toDouble(), camPose[4].toDouble(), camPose[5].toDouble(),
@@ -710,10 +720,11 @@ class IssFilamentView @JvmOverloads constructor(
         onCameraPoseUpdated?.invoke(camPose, aspect, 42.0f, cameraController.zoomFactor, showBorders > 0.5f, sunDir, snapshot.sunlightFactor > 0.05f)
 
         // 6. Update Sun Visual Billboard Position & Camera-Facing Orientation
-        val sunDist = 74.0f
-        val sunX = sun.vectorX * sunDist
-        val sunY = sun.vectorY * sunDist
-        val sunZ = sun.vectorZ * sunDist
+        val sunDist = 3900.0f
+        val sunScale = sunDist / 74.0f
+        val sunX = camPose[0] + sun.vectorX * sunDist
+        val sunY = camPose[1] + sun.vectorY * sunDist
+        val sunZ = camPose[2] + sun.vectorZ * sunDist
 
         sunBillboardMesh?.let { mesh ->
             val tm = engine.transformManager
@@ -750,9 +761,9 @@ class IssFilamentView @JvmOverloads constructor(
                 val trueUpZ = fwdX * rightY - fwdY * rightX
 
                 val transform = floatArrayOf(
-                    rightX, rightY, rightZ, 0f,
-                    trueUpX, trueUpY, trueUpZ, 0f,
-                    fwdX, fwdY, fwdZ, 0f,
+                    rightX * sunScale, rightY * sunScale, rightZ * sunScale, 0f,
+                    trueUpX * sunScale, trueUpY * sunScale, trueUpZ * sunScale, 0f,
+                    fwdX * sunScale, fwdY * sunScale, fwdZ * sunScale, 0f,
                     sunX, sunY, sunZ, 1f
                 )
                 tm.setTransform(instance, transform)
@@ -766,6 +777,21 @@ class IssFilamentView @JvmOverloads constructor(
         }
     }
 
+    private fun updateCelestialTransforms(timeMillis: Long, eye: OrbitVector) {
+        val tm = engine.transformManager
+        fun place(mesh: EarthMesh?, originalRadius: Double, radius: Double) {
+            mesh ?: return
+            var instance = tm.getInstance(mesh.entity)
+            if (instance == 0) { tm.create(mesh.entity); instance = tm.getInstance(mesh.entity) }
+            tm.setTransform(instance, OrbitSky.matrix(timeMillis, eye, originalRadius, radius))
+        }
+        // Infinite-sky approximation: the dome follows camera translation, never its rotation.
+        // Existing materials are double-sided, so correcting the old mesh parity is safe.
+        place(milkyWayMesh, 85.0, 4400.0)
+        place(starfieldMesh, 68.0, OrbitScale.SKY_RADIUS)
+        place(constellationLinesMesh, 67.8, OrbitScale.SKY_RADIUS - 10.0)
+    }
+
     var onCameraModified: ((Boolean) -> Unit)? = null
     var onCameraPoseUpdated: ((camPose: FloatArray, aspect: Float, fovY: Float, zoom: Float, bordersVisible: Boolean, sunDir: FloatArray, inSunlight: Boolean) -> Unit)? = null
 
@@ -773,7 +799,8 @@ class IssFilamentView @JvmOverloads constructor(
         override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
             val factor = detector.scaleFactor
             if (factor > 0.01f) {
-                cameraController.zoomFactor = (cameraController.zoomFactor / factor).coerceIn(0.35f, 3.5f)
+                // Logarithmic distance is handled by the controller; avoid an extreme optical FOV.
+                cameraController.zoomFactor = cameraController.zoomFactor / factor
                 onCameraModified?.invoke(cameraController.isModified())
             }
             return true
