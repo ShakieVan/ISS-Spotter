@@ -3,35 +3,37 @@ package de.shakie.iss.graphics
 import kotlin.math.*
 
 /**
- * Fixed ISS pivot and physical zoom. Orientation is carried in the ISS-local frame
- * (east, north, outward), not rebuilt from a possibly singular global north vector.
- * Gestures turn about the CURRENT screen axes, including after looking past nadir.
+ * ISS-centred, roll-locked orbit camera. The up reference is the geographic NORTH
+ * TANGENT at the ISS, not global +Y and not the camera's previous up vector.
+ * Orientation is reconstructed from two independent angles. Closed touch paths
+ * therefore cannot accumulate the trackball roll of successive screen-axis rotations.
  */
 class OrbitCameraController {
-    private val tilt = Math.toRadians(90.0 - DEFAULT_ELEVATION_DEG)
-    private val initialForward = OrbitVector(0.0, sin(tilt), -cos(tilt))
-    private val initialUp = OrbitVector(0.0, cos(tilt), sin(tilt))
-    private var localForward = initialForward
-    private var localUp = initialUp
-    private var debugYaw = 0f
-    private var debugPitch = 0f
+    private var yawDegrees = 0.0
+    private var pitchDegrees = 0.0
+    private val initialNorthElevation = 90.0 - DEFAULT_ELEVATION_DEG
+    private val initialForward = OrbitVector(0.0, sin(Math.toRadians(initialNorthElevation)), -cos(Math.toRadians(initialNorthElevation)))
+    private val initialUp = OrbitVector(0.0, cos(Math.toRadians(initialNorthElevation)), sin(Math.toRadians(initialNorthElevation)))
 
-    // Absolute legacy/ADB settings. Touch input uses orbitByPixels instead; it must
-    // never reconstruct an accumulated free orientation from two Euler angles.
+    // Effective angles are also used by ADB. Touch keeps unclipped displacement
+    // during one gesture so a loop that briefly reaches a limit still closes.
     var yawOffsetDeg: Float
-        get() = debugYaw
-        set(value) { if (value.isFinite()) { debugYaw = wrap(value); setDebugOrientation() } }
+        get() = yawDegrees.toFloat()
+        set(value) { if (value.isFinite()) yawDegrees = wrap(value.toDouble()) }
     var pitchOffsetDeg: Float
-        get() = debugPitch
-        set(value) { if (value.isFinite()) { debugPitch = wrap(value); setDebugOrientation() } }
+        get() = effectivePitch().toFloat()
+        set(value) { if (value.isFinite()) pitchDegrees = boundedPitch(value.toDouble()) }
 
     var zoomFactor: Float = 1f
         set(value) { if (value.isFinite()) field = value.coerceIn(MIN_ZOOM, MAX_ZOOM) }
     var viewportAspect: Float = 0.56f
         set(value) { if (value.isFinite() && value > 0f) field = value.coerceIn(0.2f, 4f) }
 
-    fun isModified(): Boolean = localForward.dot(initialForward) < cos(Math.toRadians(0.5)) ||
-        localUp.dot(initialUp) < cos(Math.toRadians(0.5)) || abs(zoomFactor - 1f) > 0.02f
+    fun isModified(): Boolean {
+        val (forward, up) = localOrientation()
+        return forward.dot(initialForward) < cos(Math.toRadians(0.5)) ||
+            up.dot(initialUp) < cos(Math.toRadians(0.5)) || abs(zoomFactor - 1f) > 0.02f
+    }
 
     fun defaultDistance(): Double {
         val tangent = tan(Math.toRadians(OrbitScale.FOV_Y_DEG * 0.5)) * min(viewportAspect.toDouble(), 1.0)
@@ -46,8 +48,7 @@ class OrbitCameraController {
         val q = (radius * radius + sqrt(radius.pow(4) + 4.0 * k * k * radius * radius * pivotRadius * pivotRadius)) / (2.0 * k * k)
         val diameterDistance = sqrt(radius * radius + q)
         val edgeDistance = (pivotRadius + radius * sqrt(1.0 + tangent * tangent)) / tangent
-        // Free orbit also allows the Earth between the camera and ISS. Include the
-        // maximum forward offset of the Earth, rather than assuming a spaceward eye.
+        // Keep the existing wide zoom range, also with Earth between eye and ISS.
         return max(diameterDistance, edgeDistance) * 1.03 + pivotRadius
     }
 
@@ -68,34 +69,38 @@ class OrbitCameraController {
             else (1.0 + (MAX_ZOOM - 1.0) * ln(distance / close) / ln(end / close)).toFloat()
     }
 
-    /** Direct manipulation: right/down drags move the background right/down. */
+    /** Right/down drags move the background right/down. No accumulated roll. */
     fun orbitByPixels(dx: Float, dy: Float) {
         if (!dx.isFinite() || !dy.isFinite()) return
-        rotateScreen(dx.toDouble() * DRAG_DEGREES_PER_PIXEL, dy.toDouble() * DRAG_DEGREES_PER_PIXEL)
+        yawDegrees = wrap(yawDegrees + dx.toDouble() * DRAG_DEGREES_PER_PIXEL)
+        pitchDegrees += dy.toDouble() * DRAG_DEGREES_PER_PIXEL
     }
 
-    private fun rotateScreen(yawDegrees: Double, pitchDegrees: Double) {
-        val yaw = Math.toRadians(yawDegrees % 360.0)
-        val pitch = Math.toRadians(pitchDegrees % 360.0)
-        // Rotation vector in the current screen plane. A single rotation keeps
-        // diagonal drags independent of event subdivision and exactly reversible.
-        val right = localForward.cross(localUp).unit(OrbitVector.X)
-        val axisAngle = localUp * yaw + right * pitch
-        val angle = axisAngle.length()
-        if (angle <= 1e-14) return
-        val axis = axisAngle * (1.0 / angle)
-        localForward = rotate(localForward, axis, angle).unit()
-        localUp = rotate(localUp, axis, angle)
-        // Carry roll continuously through the poles; do not snap it to +/- global Y.
-        val orthogonalRight = localForward.cross(localUp).unit(right)
-        localUp = orthogonalRight.cross(localForward).unit()
+    /**
+     * Called at touch/pointer/lifecycle boundaries, never during a one-finger loop.
+     * Discard excess beyond a pole limit so the NEXT gesture responds immediately.
+     * This changes neither the displayed pose nor zoom.
+     */
+    fun endOrbitGesture() {
+        pitchDegrees = effectivePitch()
     }
 
-    private fun setDebugOrientation() {
-        localForward = initialForward
-        localUp = initialUp
-        rotateScreen(debugYaw.toDouble(), 0.0)
-        rotateScreen(0.0, debugPitch.toDouble())
+    private fun boundedPitch(value: Double) = value.coerceIn(
+        -MAX_NORTH_ELEVATION_DEG - initialNorthElevation,
+        MAX_NORTH_ELEVATION_DEG - initialNorthElevation
+    )
+    private fun effectivePitch() = boundedPitch(pitchDegrees)
+
+    private fun localOrientation(): Pair<OrbitVector, OrbitVector> {
+        val yaw = Math.toRadians(yawDegrees)
+        val elevation = Math.toRadians(initialNorthElevation + effectivePitch())
+        val sy = sin(yaw); val cy = cos(yaw)
+        val se = sin(elevation); val ce = cos(elevation)
+        // Local frame: X=east, Y=north tangent, Z=radially outward.
+        // Analytical orthonormal basis; no normalization of a nearly zero north projection.
+        val forward = OrbitVector(-sy * ce, se, -cy * ce)
+        val up = OrbitVector(sy * se, ce, cy * se)
+        return forward to up
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -105,32 +110,32 @@ class OrbitCameraController {
         val north = (OrbitVector.Y - radial * radial.y).unit(OrbitVector.Z)
         val east = north.cross(radial).unit(OrbitVector.Z * -1.0)
         fun toWorld(v: OrbitVector) = east * v.x + north * v.y + radial * v.z
+        val (localForward, localUp) = localOrientation()
         val forward = toWorld(localForward).unit()
         val up = toWorld(localUp).unit()
         val distance = cameraDistance()
-        // No moving pivot, collision clamp, pole clamp or camera-position correction.
+        // Earth crossing remains permitted. Do not relocate the camera or pivot.
         val eye = iss - forward * distance
         val target = if (distance >= 1.0) iss else eye + forward
         return eye.floats() + target.floats() + up.floats()
     }
 
     fun reset() {
-        debugYaw = 0f
-        debugPitch = 0f
-        localForward = initialForward
-        localUp = initialUp
+        yawDegrees = 0.0
+        pitchDegrees = 0.0
         zoomFactor = 1f
     }
 
-    private fun rotate(v: OrbitVector, axis: OrbitVector, angle: Double): OrbitVector =
-        v * cos(angle) + axis.cross(v) * sin(angle) + axis * (axis.dot(v) * (1.0 - cos(angle)))
-    private fun wrap(value: Float): Float = ((value.toDouble() + 180.0) % 360.0 + 360.0).rem(360.0).minus(180.0).toFloat()
+    private fun wrap(value: Double): Double = ((value + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
 
     companion object {
         const val MIN_ZOOM = 0.35f
         const val MAX_ZOOM = 12f
         const val DEFAULT_ELEVATION_DEG = 32.0
         const val DRAG_DEGREES_PER_PIXEL = 0.16
+        // A north-locked camera has no defined roll looking exactly along +/-north.
+        // Stop 0.5 degrees short; nadir (elevation=0) is NOT a singularity or a limit.
+        const val MAX_NORTH_ELEVATION_DEG = 89.5
         private const val PINCH_GAIN = 2.0
     }
 }

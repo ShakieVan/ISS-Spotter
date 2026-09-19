@@ -609,6 +609,9 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     fun pauseRendering() {
+        cameraController.endOrbitGesture()
+        isDragging = false
+        activePointerId = MotionEvent.INVALID_POINTER_ID
         isPaused = true
         isRendering = false
         Choreographer.getInstance().removeFrameCallback(this)
@@ -828,6 +831,7 @@ class IssFilamentView @JvmOverloads constructor(
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                cameraController.endOrbitGesture()
                 activePointerId = event.getPointerId(0)
                 lastTouchX = event.getX(0)
                 lastTouchY = event.getY(0)
@@ -836,10 +840,12 @@ class IssFilamentView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
+                cameraController.endOrbitGesture()
                 isDragging = false
                 return true
             }
             MotionEvent.ACTION_POINTER_UP -> {
+                cameraController.endOrbitGesture()
                 // Rebase on the remaining finger; never treat a pointer-index change
                 // or the last pinch span as a one-finger camera rotation.
                 val remaining = (0 until event.pointerCount).firstOrNull { it != event.actionIndex }
@@ -855,6 +861,7 @@ class IssFilamentView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_MOVE -> {
                 if (event.pointerCount != 1 || scaleDetector.isInProgress) {
+                    cameraController.endOrbitGesture()
                     isDragging = false
                     return true
                 }
@@ -872,6 +879,15 @@ class IssFilamentView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                // Consume the final coordinate too, so a closed finger path really closes.
+                if (event.actionMasked == MotionEvent.ACTION_UP && isDragging) {
+                    val index = event.findPointerIndex(activePointerId)
+                    if (index >= 0) cameraController.orbitByPixels(
+                        event.getX(index) - lastTouchX, event.getY(index) - lastTouchY
+                    )
+                }
+                cameraController.endOrbitGesture()
+                onCameraModified?.invoke(cameraController.isModified())
                 isDragging = false
                 activePointerId = MotionEvent.INVALID_POINTER_ID
                 parent?.requestDisallowInterceptTouchEvent(false)
@@ -899,6 +915,9 @@ class IssFilamentView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromSurface() {
+        cameraController.endOrbitGesture()
+        isDragging = false
+        activePointerId = MotionEvent.INVALID_POINTER_ID
         isRendering = false
         Choreographer.getInstance().removeFrameCallback(this)
         swapChain?.let {
