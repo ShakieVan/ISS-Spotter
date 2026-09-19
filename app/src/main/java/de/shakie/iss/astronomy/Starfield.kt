@@ -221,7 +221,8 @@ class SkyRenderer {
     )
 
     /**
-     * Projects and renders the real seasonal starry sky and constellations.
+     * Projects and renders the real seasonal starry sky and constellations
+     * using the unified 3D perspective camera model with roll and zoom.
      */
     fun draw(
         canvas: Canvas,
@@ -229,10 +230,8 @@ class SkyRenderer {
         h: Float,
         centerX: Float,
         centerY: Float,
-        hfov: Float,
-        vfov: Float,
-        deviceAzimuth: Float,
-        devicePitch: Float,
+        rotationMatrix: FloatArray,
+        projectionData: de.shakie.iss.observer.CameraProjectionData,
         obsLatDeg: Double,
         obsLonDeg: Double,
         timeMillis: Long = System.currentTimeMillis()
@@ -263,22 +262,24 @@ class SkyRenderer {
             if (azRad < 0) azRad += 2.0 * Math.PI
             val azDeg = Math.toDegrees(azRad)
 
-            // Screen projection relative to device bearing & pitch
-            var deltaAz = (azDeg.toFloat() - deviceAzimuth)
-            while (deltaAz > 180f) deltaAz -= 360f
-            while (deltaAz < -180f) deltaAz += 360f
-
-            val deltaEl = (altDeg.toFloat() - devicePitch)
-
-            val screenX = centerX + (deltaAz / (hfov / 2f)) * (w * 0.45f)
-            val screenY = centerY - (deltaEl / (vfov / 2f)) * (h * 0.45f)
+            // 3D Perspective Projection via unified CameraProjector
+            val proj = de.shakie.iss.observer.CameraProjector.projectDirection(
+                azimuthDeg = azDeg,
+                elevationDeg = altDeg,
+                rotationMatrix = rotationMatrix,
+                data = projectionData
+            )
 
             // Magnitude to brightness & radius
             val baseRadius = (3.8 - star.magnitude * 0.7).coerceIn(1.2, 5.0).toFloat()
             val alpha = (255 - star.magnitude * 28.0).coerceIn(90.0, 255.0).toInt()
 
-            val isInScreen = screenX in -50f..(w + 50f) && screenY in -50f..(h + 50f) && altDeg >= -5.0
-            starMap[star.name] = StarPoint(screenX, screenY, baseRadius, alpha, isInScreen)
+            val isInScreen = !proj.isBehindCamera &&
+                    proj.screenX in -60f..(w + 60f) &&
+                    proj.screenY in -60f..(h + 60f) &&
+                    altDeg >= -5.0
+
+            starMap[star.name] = StarPoint(proj.screenX, proj.screenY, baseRadius, alpha, isInScreen)
         }
 
         // 3. Draw Constellation Lines

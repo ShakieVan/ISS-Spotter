@@ -21,8 +21,12 @@ import androidx.lifecycle.lifecycleScope
 import de.shakie.iss.databinding.ActivityMainBinding
 import de.shakie.iss.graphics.*
 import de.shakie.iss.observer.ArCameraManager
+import de.shakie.iss.observer.CalibrationAccuracy
+import de.shakie.iss.observer.CameraProjectionData
+import de.shakie.iss.observer.CameraProjector
 import de.shakie.iss.observer.DeviceOrientation
 import de.shakie.iss.observer.OrientationSensorHelper
+import de.shakie.iss.orbit.HorizontalCoordinates
 import de.shakie.iss.orbit.IssSnapshot
 import de.shakie.iss.orbit.IssTracker
 import de.shakie.iss.weather.GibsSatelliteDownloader
@@ -54,6 +58,12 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     private var debugTimeOverride: Long? = null
     private var debugFreeze: Boolean = false
     private var debugSunOverride: FloatArray? = null
+    private var debugDiagTargetAz: Float? = null
+    private var debugDiagTargetEl: Float? = null
+    private var debugObserverYaw: Float? = null
+    private var debugObserverPitch: Float? = null
+    private var debugObserverRoll: Float? = null
+    private var debugCameraZoom: Float? = null
 
     private val debugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -63,6 +73,13 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 debugTimeOverride = null
                 debugFreeze = false
                 debugSunOverride = null
+                debugDiagTargetAz = null
+                debugDiagTargetEl = null
+                debugObserverYaw = null
+                debugObserverPitch = null
+                debugObserverRoll = null
+                debugCameraZoom = null
+                arCameraManager?.forcedZoomRatio = null
                 binding.filamentView.setReferenceMode(false)
                 binding.globeOverlayView.diagnosticMarkersVisible = false
                 normalAnalysisEnabled = false
@@ -147,8 +164,50 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 val vz = (-cos(latRad) * sin(lonRad))
                 debugSunOverride = floatArrayOf(vx, vy, vz)
             }
+            if (intent.hasExtra("mode")) {
+                val mode = intent.getStringExtra("mode")
+                if (mode.equals("observer", ignoreCase = true)) {
+                    switchToObserverMode()
+                } else if (mode.equals("iss", ignoreCase = true)) {
+                    switchToIssMode()
+                }
+            }
+            if (intent.hasExtra("diag_target_az")) {
+                debugDiagTargetAz = intent.getFloatExtra("diag_target_az", 0f)
+            }
+            if (intent.hasExtra("diag_target_el")) {
+                debugDiagTargetEl = intent.getFloatExtra("diag_target_el", 0f)
+            }
+            if (intent.hasExtra("observer_yaw")) {
+                debugObserverYaw = intent.getFloatExtra("observer_yaw", 0f)
+            }
+            if (intent.hasExtra("observer_pitch")) {
+                debugObserverPitch = intent.getFloatExtra("observer_pitch", 0f)
+            }
+            if (intent.hasExtra("observer_roll")) {
+                debugObserverRoll = intent.getFloatExtra("observer_roll", 0f)
+            }
+            if (intent.hasExtra("camera_zoom")) {
+                val zoom = intent.getFloatExtra("camera_zoom", 1f)
+                debugCameraZoom = zoom
+                arCameraManager?.setZoomRatio(zoom)
+            }
+            if (intent.hasExtra("sky_mode")) {
+                val sky = intent.getBooleanExtra("sky_mode", false)
+                binding.calloutOverlayView.showVirtualSky = sky
+                if (sky) {
+                    arCameraManager?.stopCamera()
+                    binding.cameraPreview.visibility = View.GONE
+                    binding.btnToggleSkyMode.text = "✦ AR-Kamera"
+                    binding.calloutOverlayView.setCameraProjectionData(CameraProjectionData(calibrationAccuracy = CalibrationAccuracy.VIRTUAL_SKY))
+                } else {
+                    binding.cameraPreview.visibility = View.VISIBLE
+                    binding.btnToggleSkyMode.text = "✦ Sternenhimmel"
+                    startCameraPreview()
+                }
+            }
             binding.filamentView.onCameraModified?.invoke(binding.filamentView.cameraController.isModified())
-            Log.i("MainActivity", "Debug scene updated: yaw=${binding.filamentView.cameraController.yawOffsetDeg}, pitch=${binding.filamentView.cameraController.pitchOffsetDeg}, zoom=${binding.filamentView.cameraController.zoomFactor}, time=$debugTimeOverride, freeze=$debugFreeze")
+            Log.i("MainActivity", "Debug scene updated: yaw=${binding.filamentView.cameraController.yawOffsetDeg}, pitch=${binding.filamentView.cameraController.pitchOffsetDeg}, zoom=${binding.filamentView.cameraController.zoomFactor}, time=$debugTimeOverride, freeze=$debugFreeze, observerYaw=$debugObserverYaw, observerPitch=$debugObserverPitch, diagAz=$debugDiagTargetAz, diagEl=$debugDiagTargetEl")
         }
     }
 
@@ -316,6 +375,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 arCameraManager?.stopCamera()
                 binding.cameraPreview.visibility = View.GONE
                 binding.btnToggleSkyMode.text = "✦ AR-Kamera"
+                binding.calloutOverlayView.setCameraProjectionData(CameraProjectionData(calibrationAccuracy = CalibrationAccuracy.VIRTUAL_SKY))
             } else {
                 // User switched to AR-Camera (live camera background)
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -541,6 +601,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         issTracker.observerLat = loc.latitude
         issTracker.observerLon = loc.longitude
         issTracker.observerAltKm = loc.altitude / 1000.0
+        orientationHelper.updateObserverLocation(loc.latitude, loc.longitude, loc.altitude / 1000.0)
     }
 
     private fun startCameraPreview() {
@@ -552,13 +613,21 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             ) { isCameraActive ->
                 runOnUiThread {
                     if (isCameraActive) {
-                        binding.calloutOverlayView.showVirtualSky = false
-                        binding.cameraPreview.visibility = View.VISIBLE
-                        binding.btnToggleSkyMode.text = "✦ Sternenhimmel"
+                        if (!binding.calloutOverlayView.showVirtualSky) {
+                            binding.cameraPreview.visibility = View.VISIBLE
+                            binding.btnToggleSkyMode.text = "✦ Sternenhimmel"
+                        }
                     } else {
                         binding.calloutOverlayView.showVirtualSky = true
                         binding.cameraPreview.visibility = View.GONE
                         binding.btnToggleSkyMode.text = "✦ AR-Kamera"
+                        binding.calloutOverlayView.setCameraProjectionData(CameraProjectionData(calibrationAccuracy = CalibrationAccuracy.VIRTUAL_SKY))
+                    }
+                }
+            }.apply {
+                onProjectionDataChanged = { projData ->
+                    runOnUiThread {
+                        binding.calloutOverlayView.setCameraProjectionData(projData)
                     }
                 }
             }
@@ -623,18 +692,49 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             baseSnapshot
         }
 
-        binding.globeOverlayView.issSubPointLatLon = Pair(snapshot.latitude, snapshot.longitude)
-
-        if (!isObserverMode) {
-            binding.filamentView.setSnapshot(snapshot)
+        val orient = if (debugObserverYaw != null || debugObserverPitch != null || debugObserverRoll != null) {
+            val yaw = debugObserverYaw ?: currentOrientation.azimuthDeg
+            val pitch = debugObserverPitch ?: currentOrientation.pitchDeg
+            val roll = debugObserverRoll ?: currentOrientation.rollDeg
+            val rotMat = CameraProjector.createRotationMatrix(yaw, pitch, roll)
+            DeviceOrientation(
+                azimuthDeg = yaw,
+                pitchDeg = pitch,
+                rollDeg = roll,
+                rotationMatrix = rotMat,
+                declinationDeg = currentOrientation.declinationDeg,
+                sensorAccuracyLevel = currentOrientation.sensorAccuracyLevel
+            )
         } else {
-            binding.calloutOverlayView.updateData(currentOrientation, snapshot)
+            currentOrientation
         }
 
-        updateTelemetryUI(snapshot)
+        val effSnapshot = if (debugDiagTargetAz != null && debugDiagTargetEl != null) {
+            val diagAz = debugDiagTargetAz!!.toDouble()
+            val diagEl = debugDiagTargetEl!!.toDouble()
+            val horiz = HorizontalCoordinates(
+                azimuthDeg = diagAz,
+                elevationDeg = diagEl,
+                distanceKm = 420.0,
+                isVisibleAboveHorizon = diagEl > 0.0
+            )
+            snapshot.copy(horizontal = horiz)
+        } else {
+            snapshot
+        }
+
+        binding.globeOverlayView.issSubPointLatLon = Pair(effSnapshot.latitude, effSnapshot.longitude)
+
+        if (!isObserverMode) {
+            binding.filamentView.setSnapshot(effSnapshot)
+        } else {
+            binding.calloutOverlayView.updateData(orient, effSnapshot)
+        }
+
+        updateTelemetryUI(effSnapshot, orient)
     }
 
-    private fun updateTelemetryUI(snapshot: IssSnapshot) {
+    private fun updateTelemetryUI(snapshot: IssSnapshot, orient: DeviceOrientation) {
         // Coordinates & Overflight Location
         val latDir = if (snapshot.latitude >= 0) "N" else "S"
         val lonDir = if (snapshot.longitude >= 0) "O" else "W"
@@ -673,8 +773,8 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         if (horiz != null) {
             val elSign = if (horiz.elevationDeg >= 0) "+" else ""
             val camInfo = if (isObserverMode) {
-                val camElSign = if (currentOrientation.pitchDeg >= 0) "+" else ""
-                String.format("  |  BLICK: %.0f°/%s%.0f°", currentOrientation.azimuthDeg, camElSign, currentOrientation.pitchDeg)
+                val camElSign = if (orient.pitchDeg >= 0) "+" else ""
+                String.format("  |  BLICK: %.0f°/%s%.0f°", orient.azimuthDeg, camElSign, orient.pitchDeg)
             } else ""
             binding.tvObserverRelative.text = String.format(
                 "SPEED: %.0f km/h  DIST: %.0f km  ISS: %.0f°/%s%.0f°%s",

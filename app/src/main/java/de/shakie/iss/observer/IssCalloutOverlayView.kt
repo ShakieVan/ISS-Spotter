@@ -60,9 +60,9 @@ class IssCalloutOverlayView @JvmOverloads constructor(
     }
 
     private val horizonLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(120, 0, 206, 201)
+        color = Color.argb(140, 0, 206, 201)
         style = Paint.Style.STROKE
-        strokeWidth = 2f
+        strokeWidth = 2.5f
     }
 
     private val compassTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -72,14 +72,22 @@ class IssCalloutOverlayView @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
     }
 
+    private val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(160, 5, 15, 30)
+        style = Paint.Style.FILL
+    }
+
+    private val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00CEC9")
+        textSize = 19f
+        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+    }
+
     // State
     private var orientation: DeviceOrientation? = null
     private var snapshot: IssSnapshot? = null
     var showVirtualSky: Boolean = false
-
-    // Camera field of view (degrees)
-    private val cameraHfov = 62.0f
-    private val cameraVfov = 76.0f
+    private var cameraProjectionData = CameraProjectionData()
 
     private val calloutPath = Path()
 
@@ -89,11 +97,18 @@ class IssCalloutOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setCameraProjectionData(data: CameraProjectionData) {
+        cameraProjectionData = data
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
         val w = width.toFloat()
         val h = height.toFloat()
+        if (w <= 1f || h <= 1f) return
+
         val centerX = w / 2f
         val centerY = h / 2f
 
@@ -101,7 +116,21 @@ class IssCalloutOverlayView @JvmOverloads constructor(
         val snap = snapshot ?: return
         val horiz = snap.horizontal ?: return
 
-        // 1. Draw Virtual Sky Background if enabled (or dark backing for camera overlay)
+        // Effective projection data for this draw call
+        val effectiveProjData = if (showVirtualSky) {
+            cameraProjectionData.copy(
+                calibrationAccuracy = CalibrationAccuracy.VIRTUAL_SKY,
+                viewWidth = width,
+                viewHeight = height
+            )
+        } else {
+            cameraProjectionData.copy(
+                viewWidth = width,
+                viewHeight = height
+            )
+        }
+
+        // 1. Draw Virtual Sky Background if enabled
         if (showVirtualSky) {
             val skyGradient = LinearGradient(
                 0f, 0f, 0f, h,
@@ -112,8 +141,7 @@ class IssCalloutOverlayView @JvmOverloads constructor(
             canvas.drawPaint(Paint().apply { shader = skyGradient })
         }
 
-        // 2. Draw Realistic Starry Sky with Seasonal Constellations!
-        // (Visible in Virtual Sky mode or as celestial overlay above horizon)
+        // 2. Draw Realistic Starry Sky with Seasonal Constellations using unified 3D projector
         val obsLat = snap.observerLat
         val obsLon = snap.observerLon
         skyRenderer.draw(
@@ -122,47 +150,38 @@ class IssCalloutOverlayView @JvmOverloads constructor(
             h = h,
             centerX = centerX,
             centerY = centerY,
-            hfov = cameraHfov,
-            vfov = cameraVfov,
-            deviceAzimuth = orient.azimuthDeg,
-            devicePitch = orient.pitchDeg,
+            rotationMatrix = orient.rotationMatrix,
+            projectionData = effectiveProjData,
             obsLatDeg = obsLat,
             obsLonDeg = obsLon,
             timeMillis = snap.timestampMillis
         )
 
-        // 3. Draw Artificial Horizon & Compass Marks
-        val horizonY = centerY + (orient.pitchDeg / (cameraVfov / 2f)) * (h / 2f)
-        if (horizonY in -50f..(h + 50f)) {
-            canvas.drawLine(0f, horizonY, w, horizonY, horizonLinePaint)
-            val headings = listOf(0f to "N", 90f to "O", 180f to "S", 270f to "W")
-            for ((bearing, label) in headings) {
-                var dAz = (bearing - orient.azimuthDeg)
-                while (dAz > 180f) dAz -= 360f
-                while (dAz < -180f) dAz += 360f
+        // 3. Draw 3D Artificial Horizon & Compass Marks
+        val horizon = CameraProjector.projectHorizonLine(orient.rotationMatrix, effectiveProjData)
+        if (horizon.isVisible) {
+            canvas.drawLine(horizon.startX, horizon.startY, horizon.endX, horizon.endY, horizonLinePaint)
 
-                val markX = centerX + (dAz / (cameraHfov / 2f)) * (w / 2f)
-                if (markX in 30f..(w - 30f)) {
-                    canvas.drawLine(markX, horizonY - 15f, markX, horizonY + 15f, horizonLinePaint)
-                    canvas.drawText(label, markX, horizonY - 24f, compassTextPaint)
+            // Compass Marks on Horizon (El = 0)
+            val headings = listOf(0.0 to "N", 90.0 to "O", 180.0 to "S", 270.0 to "W")
+            for ((bearing, label) in headings) {
+                val p = CameraProjector.projectDirection(bearing, 0.0, orient.rotationMatrix, effectiveProjData)
+                if (!p.isBehindCamera && p.isInViewBounds) {
+                    canvas.drawCircle(p.screenX, p.screenY, 4.5f, horizonLinePaint)
+                    canvas.drawText(label, p.screenX, p.screenY - 16f, compassTextPaint)
                 }
             }
         }
 
-        // 4. Compute Angular Offset to ISS
-        var deltaAz = (horiz.azimuthDeg.toFloat() - orient.azimuthDeg)
-        while (deltaAz > 180f) deltaAz -= 360f
-        while (deltaAz < -180f) deltaAz += 360f
+        // 4. Project ISS using unified 3D perspective projector
+        val projIss = CameraProjector.projectDirection(
+            azimuthDeg = horiz.azimuthDeg,
+            elevationDeg = horiz.elevationDeg,
+            rotationMatrix = orient.rotationMatrix,
+            data = effectiveProjData
+        )
 
-        val deltaEl = (horiz.elevationDeg.toFloat() - orient.pitchDeg)
-
-        val halfHfov = cameraHfov / 2f
-        val halfVfov = cameraVfov / 2f
-
-        // ISS is in sight when within camera FOV angles (regardless of elevation)
-        val isInFov = abs(deltaAz) <= halfHfov && abs(deltaEl) <= halfVfov
-
-        if (isInFov) {
+        if (!projIss.isBehindCamera && projIss.isInViewBounds) {
             // === ISS IS IN SIGHT (LOCKED ON) ===
             val isBelowHorizon = horiz.elevationDeg < 0.0
             val accentColor = if (isBelowHorizon) Color.parseColor("#FFAA00") else Color.parseColor("#00E5FF")
@@ -173,8 +192,8 @@ class IssCalloutOverlayView @JvmOverloads constructor(
             calloutLinePaint.color = accentColor
             hudCardBorder.color = accentColor
 
-            val screenX = centerX + (deltaAz / halfHfov) * (w * 0.45f)
-            val screenY = centerY - (deltaEl / halfVfov) * (h * 0.45f)
+            val screenX = projIss.screenX
+            val screenY = projIss.screenY
 
             // White/amber dot with targeting ring
             canvas.drawCircle(screenX, screenY, 6.5f, dotPaint)
@@ -226,8 +245,7 @@ class IssCalloutOverlayView @JvmOverloads constructor(
 
         } else {
             // === ISS OUTSIDE SIGHT -> STARFLEET DELTA ARROW ===
-            val angleRad = atan2(-deltaEl.toDouble(), deltaAz.toDouble()).toFloat()
-            val angleDeg = Math.toDegrees(angleRad.toDouble()).toFloat()
+            val angleRad = Math.toRadians(projIss.offscreenBearingDeg.toDouble()).toFloat()
 
             val margin = 85f
             val maxRadius = min(w / 2f - margin, h / 2f - margin)
@@ -239,10 +257,36 @@ class IssCalloutOverlayView @JvmOverloads constructor(
                 canvas = canvas,
                 x = edgeX,
                 y = edgeY,
-                rotationDeg = angleDeg,
+                rotationDeg = projIss.offscreenBearingDeg,
                 elevationDeg = horiz.elevationDeg,
                 isBelowHorizon = horiz.elevationDeg < 0.0
             )
         }
+
+        // 5. Calibration & Sensor HUD status badge
+        val calibText = when (effectiveProjData.calibrationAccuracy) {
+            CalibrationAccuracy.CALIBRATED_INTRINSICS -> "KAMERA: KALIBRIERT (INTRINSICS)"
+            CalibrationAccuracy.APPROXIMATE_FOCAL_LENGTH -> {
+                val fStr = effectiveProjData.focalLengthMm?.let { String.format("%.1f mm", it) } ?: "N/A"
+                val zStr = if (effectiveProjData.currentZoomRatio > 1.05f) String.format(" (%.1fx Zoom)", effectiveProjData.currentZoomRatio) else ""
+                "KAMERA: NÄHERUNG (f=$fStr$zStr)"
+            }
+            CalibrationAccuracy.VIRTUAL_SKY -> "MODUS: VIRTUELLER STERNENHIMMEL"
+        }
+
+        val compText = when (orient.sensorAccuracyLevel) {
+            SensorAccuracyLevel.GEOMAGNETIC_TRUE_NORTH -> {
+                val sign = if (orient.declinationDeg >= 0) "+" else ""
+                String.format("KOMPASS: GEOGRAPHISCH NORD (DEKL. %s%.1f°)", sign, orient.declinationDeg)
+            }
+            SensorAccuracyLevel.GAME_ROTATION_RELATIVE -> "KOMPASS: RELATIVE DREHUNG (KEIN MAGNETOMETER)"
+            SensorAccuracyLevel.SENSOR_UNAVAILABLE -> "KOMPASS: SENSOR NICHT VERFÜGBAR"
+        }
+
+        val badgeX = 24f
+        val badgeY = h - 34f
+        canvas.drawRect(badgeX - 6f, badgeY - 32f, badgeX + 460f, badgeY + 18f, badgePaint)
+        canvas.drawText(calibText, badgeX, badgeY - 14f, badgeTextPaint)
+        canvas.drawText(compText, badgeX, badgeY + 10f, badgeTextPaint)
     }
 }
