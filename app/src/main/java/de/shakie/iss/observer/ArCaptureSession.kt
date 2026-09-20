@@ -174,8 +174,8 @@ class ArCaptureSession(
         recordedOverlay = saveOverlay
         audioMonitor.start()
         notifiedAudioProblem = null
-        val values = mediaValues("ISS_${stamp()}.mp4", "video/mp4", "Movies/ISS-Spotter")
         try {
+            val values = CaptureAlbum.mediaValues("ISS_${stamp()}.mp4", "video/mp4")
             val output = MediaStoreOutputOptions.Builder(context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
                 .setContentValues(values).build()
             // The same CameraX Recorder supplies the audio track AND the level statistics.
@@ -265,7 +265,7 @@ class ArCaptureSession(
 
     private fun saveJpeg(bitmap: Bitmap): Uri {
         val resolver = context.contentResolver
-        val values = mediaValues("ISS_${stamp()}.jpg", "image/jpeg", "Pictures/ISS-Spotter")
+        val values = CaptureAlbum.mediaValues("ISS_${stamp()}.jpg", "image/jpeg")
         if (Build.VERSION.SDK_INT >= 29) values.put(MediaStore.Images.Media.IS_PENDING, 1)
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IllegalStateException("Medienablage nicht verfügbar")
@@ -278,11 +278,6 @@ class ArCaptureSession(
         } catch (e: Exception) { resolver.delete(uri, null, null); throw e }
     }
 
-    private fun mediaValues(name: String, mime: String, folder: String) = ContentValues().apply {
-        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-        put(MediaStore.MediaColumns.MIME_TYPE, mime)
-        if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.RELATIVE_PATH, folder)
-    }
     private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.ROOT).format(Date())
 
     private fun finishPhoto() {

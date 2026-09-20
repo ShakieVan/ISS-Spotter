@@ -13,6 +13,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.appcompat.widget.AppCompatButton
 import androidx.core.content.ContextCompat
 import de.shakie.iss.R
@@ -31,14 +35,14 @@ class ObserverCameraControls(
     private val prefs = activity.getSharedPreferences("capture_options", 0)
     private var includeOverlay = prefs.getBoolean("include_overlay", true)
     private var pendingStorageAction: (() -> Unit)? = null
-    private var lastUri: Uri? = null
-    private var lastMime: String? = null
-    private val panel = LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(8),dp(6),dp(8),dp(6)); setBackgroundResource(R.drawable.bg_telemetry_card) }
+    private var galleryOpening = false
+    private val galleryLauncher = CaptureGalleryLauncher(activity, ::message)
+    private val panel = LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(10),dp(12),dp(10),dp(10)); setBackgroundResource(R.drawable.bg_telemetry_card) }
     private val status = TextView(activity).apply { setTextColor(Color.WHITE); textSize=10f; gravity=Gravity.CENTER }
     private val photo = button("📷 Foto")
     private val video = button("● Video")
     private val overlayOption = button("")
-    private val gallery = button("Aufnahme öffnen")
+    private val gallery = button("Galerie öffnen")
     private val resetZoom = button("1×")
     private val focusRing = FocusRing(activity)
     private val microphoneLevel = MicrophoneLevelView(activity)
@@ -65,12 +69,13 @@ class ObserverCameraControls(
         val modeRow = row()
         for (v in listOf(trajectoryButton, skyButton)) {
             (v.parent as? ViewGroup)?.removeView(v)
-            modeRow.addView(v, LinearLayout.LayoutParams(0,dp(40),1f).apply { setMargins(dp(2),0,dp(2),dp(3)) })
+            (v as? TextView)?.let(CameraControlLayout::prepare)
+            modeRow.addView(v, weighted())
         }
         panel.addView(modeRow)
         val captureRow=row();listOf(photo,video,overlayOption).forEach { captureRow.addView(it, weighted()) };panel.addView(captureRow)
-        val toolsRow=row();toolsRow.addView(resetZoom,LinearLayout.LayoutParams(dp(62),dp(36)))
-        toolsRow.addView(status,LinearLayout.LayoutParams(0,-2,1f));toolsRow.addView(gallery,LinearLayout.LayoutParams(dp(110),dp(36)));panel.addView(toolsRow)
+        val toolsRow=row();toolsRow.addView(resetZoom,LinearLayout.LayoutParams(dp(62),ViewGroup.LayoutParams.WRAP_CONTENT))
+        toolsRow.addView(status,LinearLayout.LayoutParams(0,-2,1f));toolsRow.addView(gallery,LinearLayout.LayoutParams(dp(110),ViewGroup.LayoutParams.WRAP_CONTENT));panel.addView(toolsRow)
         // This is a sibling of the AR overlay, never a child of the captured overlay view.
         panel.addView(microphoneLevel, LinearLayout.LayoutParams(-1, dp(36)))
         container.addView(focusRing,FrameLayout.LayoutParams(-1,-1))
@@ -86,12 +91,11 @@ class ObserverCameraControls(
             includeOverlay=!includeOverlay;prefs.edit().putBoolean("include_overlay",includeOverlay).apply();update()
         }
         resetZoom.setOnClickListener { manager?.setZoomRatio(1f) }
-        gallery.setOnClickListener {
-            lastUri?.let { uri ->
-                runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,lastMime)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }.onFailure { message("Keine passende Galerie-App gefunden.") }
-            }
-        }
+        gallery.contentDescription = "Galerie öffnen, Album ISS-Spotter. Lange drücken für die Galerie-Startseite."
+        gallery.setOnClickListener { openGallery() }
+        // Some gallery versions accept an album intent but ignore its bucket filter.
+        // Home remains directly reachable without relying on that OEM implementation.
+        gallery.setOnLongClickListener { openGallery(homeOnly = true); true }
         val pinch=ScaleGestureDetector(activity,object:ScaleGestureDetector.SimpleOnScaleGestureListener(){
             override fun onScale(detector:ScaleGestureDetector):Boolean { manager?.zoomByScale(detector.scaleFactor);return true }
         })
@@ -150,8 +154,8 @@ class ObserverCameraControls(
         video.text=if(recording) "■ Stopp" else "● Video"
         video.setTextColor(if(recording) Color.rgb(255,90,90) else Color.CYAN)
         overlayOption.text=if(includeOverlay) "Overlay: AN" else "Overlay: AUS"
-        if(capture?.lastUri!=null) {lastUri=capture.lastUri;lastMime=capture.lastMime}
-        gallery.isEnabled=lastUri!=null
+        // Opening another app must not stop an ongoing capture or a pending permission action.
+        gallery.isEnabled=!busy && !galleryOpening && !microphoneRequestInFlight && pendingStorageAction==null
         status.text=when {
             overlay.showVirtualSky -> "Aufnahme in AR-Kamera\nPinch: Zoom • Tippen: Fokus"
             !active -> "Kamera startet …"
@@ -161,6 +165,28 @@ class ObserverCameraControls(
         microphoneLevel.setReading(capture?.microphoneReading ?: MicrophoneReading())
         container.keepScreenOn=recording
     }
+    private fun openGallery(homeOnly: Boolean = false) {
+        if (galleryOpening || manager?.busy == true || microphoneRequestInFlight || pendingStorageAction != null) return
+        galleryOpening = true
+        update()
+        activity.lifecycleScope.launch {
+            try {
+                val item = if (homeOnly) null else withContext(Dispatchers.IO) {
+                    CaptureAlbum.findLatest(activity.applicationContext)
+                }
+                // A media query can finish after the user left this scene or started recording.
+                if (!activity.isDestroyed && !activity.isFinishing && container.isShown &&
+                    activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                    manager?.busy != true && !microphoneRequestInFlight && pendingStorageAction == null) {
+                    galleryLauncher.open(item, homeOnly)
+                }
+            } finally {
+                galleryOpening = false
+                if (!activity.isDestroyed) update()
+            }
+        }
+    }
+
     private fun requestVideoWithAudio() {
         if (microphoneRequestInFlight) return
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -213,11 +239,12 @@ class ObserverCameraControls(
     }
     private fun message(text:String) { if(!activity.isDestroyed) Toast.makeText(activity,text,Toast.LENGTH_LONG).show() }
     private fun dp(v:Int)=(v*activity.resources.displayMetrics.density).toInt()
-    private fun row()=LinearLayout(activity).apply {orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
-    private fun weighted()=LinearLayout.LayoutParams(0,dp(44),1f).apply {setMargins(dp(2),dp(2),dp(2),dp(2))}
+    private fun row() = CameraControlLayout.row(activity)
+    private fun weighted() = CameraControlLayout.weighted(activity)
     private fun button(label:String)=AppCompatButton(activity).apply {
         text=label;isAllCaps=false;textSize=11f;minWidth=0;minHeight=0
-        setPadding(dp(5),0,dp(5),0);setTextColor(Color.CYAN);setBackgroundResource(R.drawable.bg_hud_button)
+        setTextColor(Color.CYAN);setBackgroundResource(R.drawable.bg_hud_button)
+        CameraControlLayout.prepare(this)
     }
     private class FocusRing(context:android.content.Context):View(context) {
         private var xPos=0f;private var yPos=0f;private var shown=false
