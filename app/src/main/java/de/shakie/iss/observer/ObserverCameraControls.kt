@@ -6,10 +6,13 @@ import android.content.pm.PackageManager
 import android.graphics.*
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.view.*
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.Lifecycle
 import androidx.appcompat.widget.AppCompatButton
 import androidx.core.content.ContextCompat
 import de.shakie.iss.R
@@ -38,6 +41,19 @@ class ObserverCameraControls(
     private val gallery = button("Aufnahme öffnen")
     private val resetZoom = button("1×")
     private val focusRing = FocusRing(activity)
+    private val microphoneLevel = MicrophoneLevelView(activity)
+    private var microphoneRequestInFlight = false
+    private val microphonePermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+        microphoneRequestInFlight = false
+        update()
+        if (allowed) {
+            // Permission dialogs may pause/unbind the camera. Never queue a surprise recording
+            // for a later resume or mode switch; use a fresh explicit tap after first consent.
+            message("Mikrofon freigegeben. Zum Aufnehmen Video antippen.")
+        } else {
+            message("Ohne Mikrofonfreigabe startet kein Video mit Ton. Fotos bleiben verfügbar.")
+        }
+    }
     private val storagePermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         val action = pendingStorageAction; pendingStorageAction=null
         if (allowed && container.isShown && manager?.ready == true) action?.invoke()
@@ -55,13 +71,15 @@ class ObserverCameraControls(
         val captureRow=row();listOf(photo,video,overlayOption).forEach { captureRow.addView(it, weighted()) };panel.addView(captureRow)
         val toolsRow=row();toolsRow.addView(resetZoom,LinearLayout.LayoutParams(dp(62),dp(36)))
         toolsRow.addView(status,LinearLayout.LayoutParams(0,-2,1f));toolsRow.addView(gallery,LinearLayout.LayoutParams(dp(110),dp(36)));panel.addView(toolsRow)
+        // This is a sibling of the AR overlay, never a child of the captured overlay view.
+        panel.addView(microphoneLevel, LinearLayout.LayoutParams(-1, dp(36)))
         container.addView(focusRing,FrameLayout.LayoutParams(-1,-1))
         container.addView(panel,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply { setMargins(dp(10),0,dp(10),dp(8)) })
 
         photo.setOnClickListener { withStorage { manager?.capture?.takePhoto() } }
         video.setOnClickListener {
             val capture=manager?.capture ?: return@setOnClickListener
-            if(capture.isRecording) capture.stopRecording() else withStorage { manager?.capture?.startRecording() }
+            if(capture.isRecording) capture.stopRecording() else requestVideoWithAudio()
         }
         overlayOption.setOnClickListener {
             if(manager?.capture?.isBusy == true) return@setOnClickListener
@@ -124,8 +142,8 @@ class ObserverCameraControls(
         val active=m?.ready==true && !overlay.showVirtualSky && m.currentProjectionData.isProjectionReady
         val recording=capture?.isRecording==true
         val busy=capture?.isBusy==true
-        photo.isEnabled=active && !busy
-        video.isEnabled=recording || (active && !busy && m?.videoAvailable==true)
+        photo.isEnabled=active && !busy && !microphoneRequestInFlight
+        video.isEnabled=recording || (active && !busy && !microphoneRequestInFlight && m?.videoAvailable==true)
         overlayOption.isEnabled=!busy
         resetZoom.isEnabled=active && capture?.isTakingPhoto!=true
         skyButton.isEnabled=!recording
@@ -139,8 +157,55 @@ class ObserverCameraControls(
             !active -> "Kamera startet …"
             else -> "%.2f× • %s".format(Locale.GERMANY,m?.globalZoom ?: 1f,capture?.status ?: "Vorschau")
         }
+        microphoneLevel.visibility = if (overlay.showVirtualSky) View.GONE else View.VISIBLE
+        microphoneLevel.setReading(capture?.microphoneReading ?: MicrophoneReading())
         container.keepScreenOn=recording
     }
+    private fun requestVideoWithAudio() {
+        if (microphoneRequestInFlight) return
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            val requestedBefore = prefs.getBoolean("microphone_requested", false)
+            val canExplain = activity.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+            if (requestedBefore && !canExplain) {
+                AlertDialog.Builder(activity).setTitle("Mikrofonfreigabe fehlt")
+                    .setMessage("Für Videos mit Ton bitte das Mikrofon in den App-Berechtigungen freigeben. Es wird kein stummes Ersatzvideo gestartet.")
+                    .setPositiveButton("Einstellungen") { _, _ ->
+                        runCatching { activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:${activity.packageName}"))) }
+                            .onFailure { message("App-Berechtigungen bitte in den Android-Einstellungen öffnen.") }
+                    }.setNegativeButton("Abbrechen", null).show()
+            } else if (canExplain) {
+                AlertDialog.Builder(activity).setTitle("Video mit Ton")
+                    .setMessage("Das Mikrofon wird nur während einer Videoaufnahme verwendet. Die Pegelanzeige bleibt außerhalb des gespeicherten Bildes.")
+                    .setPositiveButton("Freigeben") { _, _ -> requestMicrophonePermission() }
+                    .setNegativeButton("Abbrechen", null).show()
+            } else requestMicrophonePermission()
+            return
+        }
+        withStorage {
+            val m = manager
+            // A permission callback must never start a hidden or no-longer-requested recording.
+            if (!activity.isDestroyed && !activity.isFinishing && container.isShown && !overlay.showVirtualSky &&
+                activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                m?.ready == true && m.videoAvailable && m.currentProjectionData.isProjectionReady) {
+                m.capture?.startRecording()
+            } else message("Kamera noch nicht bereit. Zum Starten erneut Video antippen.")
+        }
+    }
+
+    private fun requestMicrophonePermission() {
+        if (microphoneRequestInFlight || activity.isDestroyed || !container.isShown || overlay.showVirtualSky) return
+        prefs.edit().putBoolean("microphone_requested", true).apply()
+        microphoneRequestInFlight = true
+        update()
+        try { microphonePermission.launch(Manifest.permission.RECORD_AUDIO) }
+        catch (e: IllegalStateException) {
+            microphoneRequestInFlight = false
+            update()
+            message("Mikrofonfreigabe konnte nicht geöffnet werden. Bitte erneut versuchen.")
+        }
+    }
+
     private fun withStorage(action:()->Unit) {
         if(Build.VERSION.SDK_INT<=28 && ContextCompat.checkSelfPermission(activity,Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED) {
             pendingStorageAction=action;storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)

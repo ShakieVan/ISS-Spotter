@@ -1,5 +1,8 @@
 package de.shakie.iss.observer
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.SystemClock
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.*
@@ -26,7 +29,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** Native camera capture. Never records system UI or microphone audio. Main-thread API. */
+/** Native camera capture with explicit microphone permission. Never records system/control UI. Main-thread API. */
 class ArCaptureSession(
     private val context: Context,
     private val preview: PreviewView,
@@ -43,6 +46,9 @@ class ArCaptureSession(
     private var finalizing = false
     private val afterRecording = mutableListOf<() -> Unit>()
     private var recordedOverlay = false
+    private val audioMonitor = RecordingAudioMonitor()
+    private var notifiedAudioProblem: MicrophoneState? = null
+    val microphoneReading: MicrophoneReading get() = audioMonitor.reading
     var saveOverlay: Boolean = true
     var videoOverlayAvailable: Boolean = true
         private set
@@ -50,7 +56,7 @@ class ArCaptureSession(
         private set
     var lastMime: String? = null
         private set
-    var status: String = "Video ohne Ton"
+    var status: String = "Video mit Ton"
         private set
     val isRecording get() = recording != null || finalizing
     val isBusy get() = takingPhoto || isRecording
@@ -157,24 +163,31 @@ class ArCaptureSession(
 
     fun startRecording() {
         if (closed || isBusy) return
+        // Defense in depth: a denied/revoked permission never falls back to a silent video.
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            status = "Mikrofonfreigabe erforderlich"
+            message("Video mit Ton benötigt die Mikrofonfreigabe."); changed(); return
+        }
         if (saveOverlay && (!videoOverlayAvailable || preview.sensorToViewTransform == null)) {
             message("Video mit Overlay ist noch nicht bereit. Ohne Overlay nur nach Ausschalten der Option."); return
         }
         recordedOverlay = saveOverlay
+        audioMonitor.start()
+        notifiedAudioProblem = null
         val values = mediaValues("ISS_${stamp()}.mp4", "video/mp4", "Movies/ISS-Spotter")
         try {
             val output = MediaStoreOutputOptions.Builder(context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
                 .setContentValues(values).build()
-            // Intentionally no withAudioEnabled(): no microphone permission or hidden audio.
-            recording = recorder.prepareRecording(context, output).start(main) { event ->
+            // The same CameraX Recorder supplies the audio track AND the level statistics.
+            // No competing AudioRecord/MediaRecorder and no microphone access while previewing.
+            recording = recorder.prepareRecording(context, output).withAudioEnabled().start(main) { event ->
                 when (event) {
-                    is VideoRecordEvent.Start -> { status = "● 00:00 • ohne Ton"; changed() }
-                    is VideoRecordEvent.Status -> {
-                        val seconds = event.recordingStats.recordedDurationNanos / 1_000_000_000L
-                        status = "● %02d:%02d • ohne Ton".format(Locale.GERMANY, seconds/60, seconds%60)
-                        changed()
-                    }
+                    is VideoRecordEvent.Start -> updateRecordingAudio(event.recordingStats)
+                    is VideoRecordEvent.Status -> updateRecordingAudio(event.recordingStats)
                     is VideoRecordEvent.Finalize -> {
+                        sampleAudio(event.recordingStats)
+                        val audioWarning = audioMonitor.savedWarning()
+                        audioMonitor.finish()
                         recording = null; finalizing = false
                         val usablePartial = event.error in setOf(
                             VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE,
@@ -185,7 +198,9 @@ class ArCaptureSession(
                         if ((!event.hasError() || usablePartial) && event.outputResults.outputUri != Uri.EMPTY) {
                             lastUri = event.outputResults.outputUri; lastMime = "video/mp4"
                             status = if (event.hasError()) "Video gespeichert (vorzeitig beendet)" else "Video gespeichert"
+                            if (audioWarning.isNotEmpty()) status += " • $audioWarning"
                             if (event.hasError()) message("$status • Grund ${event.error}")
+                            else if (audioWarning.isNotEmpty()) message(status)
                         } else {
                             status = "Video fehlgeschlagen (${event.error})"
                             if (event.outputResults.outputUri != Uri.EMPTY) runCatching {
@@ -201,9 +216,39 @@ class ArCaptureSession(
             }
             status = "Video startet …"; changed()
         } catch (e: Exception) {
-            recording = null; finalizing = false; status = "Video konnte nicht starten"
+            audioMonitor.finish()
+            recording = null; finalizing = false; status = "Video mit Ton konnte nicht starten"
             message("$status: ${e.message}"); changed()
         }
+    }
+
+    private fun sampleAudio(stats: RecordingStats) {
+        val audio = stats.audioStats
+        val state = when (audio.audioState) {
+            AudioStats.AUDIO_STATE_ACTIVE -> MicrophoneState.ACTIVE
+            AudioStats.AUDIO_STATE_DISABLED -> MicrophoneState.DISABLED
+            AudioStats.AUDIO_STATE_SOURCE_SILENCED -> MicrophoneState.SILENCED
+            AudioStats.AUDIO_STATE_MUTED -> MicrophoneState.MUTED
+            AudioStats.AUDIO_STATE_SOURCE_ERROR -> MicrophoneState.SOURCE_ERROR
+            AudioStats.AUDIO_STATE_ENCODER_ERROR -> MicrophoneState.ENCODER_ERROR
+            else -> MicrophoneState.UNKNOWN
+        }
+        audioMonitor.sample(state, audio.audioAmplitude, SystemClock.elapsedRealtime(), stats.recordedDurationNanos)
+    }
+
+    private fun updateRecordingAudio(stats: RecordingStats) {
+        sampleAudio(stats)
+        if (!finalizing) {
+            val state = audioMonitor.reading.state
+            val seconds = stats.recordedDurationNanos / 1_000_000_000L
+            val tone = if (state == MicrophoneState.ACTIVE) "mit Ton" else "Ton gestört"
+            status = "● %02d:%02d • %s".format(Locale.GERMANY, seconds/60, seconds%60, tone)
+            if (state.warning && notifiedAudioProblem != state) {
+                notifiedAudioProblem = state
+                message("Mikrofon liefert derzeit keinen Ton. Video läuft weiter; Pegelanzeige beachten.")
+            }
+        }
+        changed()
     }
 
     /** Unbind only AFTER finalization, so mode changes / pause do not truncate the MP4. */
@@ -211,7 +256,8 @@ class ArCaptureSession(
         if (after != null) afterRecording.add(after)
         val current = recording
         if (current != null && !finalizing) {
-            finalizing = true; status = "Video wird gespeichert …"; changed(); current.stop()
+            finalizing = true; audioMonitor.stopping()
+            status = "Video wird gespeichert …"; changed(); current.stop()
         } else if (!finalizing) {
             val pending = afterRecording.toList(); afterRecording.clear(); pending.forEach { it() }
         }
