@@ -134,6 +134,11 @@ class IssCalloutOverlayView @JvmOverloads constructor(
             )
         }
 
+        if (!showVirtualSky && !effectiveProjData.isProjectionReady) {
+            canvas.drawText("Kameraprojektion wird aktualisiert …", 24f, h * 0.5f, badgeTextPaint)
+            return
+        }
+
         // 1. Draw Virtual Sky Background if enabled
         if (showVirtualSky) {
             val skyGradient = LinearGradient(
@@ -161,19 +166,14 @@ class IssCalloutOverlayView @JvmOverloads constructor(
             timeMillis = snap.timestampMillis
         )
 
-        // 3. Draw 3D Artificial Horizon & Compass Marks
-        val horizon = CameraProjector.projectHorizonLine(orient.rotationMatrix, effectiveProjData)
-        if (horizon.isVisible) {
-            canvas.drawLine(horizon.startX, horizon.startY, horizon.endX, horizon.endY, horizonLinePaint)
-
-            // Compass Marks on Horizon (El = 0)
-            val headings = listOf(0.0 to "N", 90.0 to "O", 180.0 to "S", 270.0 to "W")
-            for ((bearing, label) in headings) {
-                val p = CameraProjector.projectDirection(bearing, 0.0, orient.rotationMatrix, effectiveProjData)
-                if (!p.isBehindCamera && p.isInViewBounds) {
-                    canvas.drawCircle(p.screenX, p.screenY, 4.5f, horizonLinePaint)
-                    canvas.drawText(label, p.screenX, p.screenY - 16f, compassTextPaint)
-                }
+        // The same lens/crop/zoom model also bends the horizon in an uncorrected preview.
+        CameraProjector.drawHorizon(canvas, orient.rotationMatrix, effectiveProjData, horizonLinePaint)
+        val headings = listOf(0.0 to "N", 90.0 to "O", 180.0 to "S", 270.0 to "W")
+        for ((bearing, label) in headings) {
+            val p = CameraProjector.projectDirection(bearing, 0.0, orient.rotationMatrix, effectiveProjData)
+            if (!p.isBehindCamera && p.isInViewBounds) {
+                canvas.drawCircle(p.screenX, p.screenY, 4.5f, horizonLinePaint)
+                canvas.drawText(label, p.screenX, p.screenY - 16f, compassTextPaint)
             }
         }
 
@@ -271,7 +271,7 @@ class IssCalloutOverlayView @JvmOverloads constructor(
         }
 
         // 5. Calibration & Sensor HUD status badge
-        val calibText = when (effectiveProjData.calibrationAccuracy) {
+        val calibText = (if (showVirtualSky) null else effectiveProjData.calibrationNote) ?: when (effectiveProjData.calibrationAccuracy) {
             CalibrationAccuracy.CALIBRATED_INTRINSICS -> "KAMERA: KALIBRIERT (INTRINSICS)"
             CalibrationAccuracy.APPROXIMATE_FOCAL_LENGTH -> {
                 val fStr = effectiveProjData.focalLengthMm?.let { String.format("%.1f mm", it) } ?: "N/A"

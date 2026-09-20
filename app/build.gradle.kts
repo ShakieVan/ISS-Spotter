@@ -10,8 +10,8 @@ android {
         applicationId = "de.shakie.iss"
         minSdk = 28
         targetSdk = 36
-        versionCode = 30
-        versionName = "1.0.29"
+        versionCode = 31
+        versionName = "1.0.30"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -51,7 +51,7 @@ android {
 }
 
 base {
-    archivesName.set("ISS-Spotter-v1.0.29")
+    archivesName.set("ISS-Spotter-v1.0.30")
 }
 
 dependencies {
@@ -67,11 +67,13 @@ dependencies {
     implementation("com.google.android.filament:gltfio-android:1.75.1")
     implementation("com.google.android.filament:filament-utils-android:1.75.1")
 
-    // CameraX for AR Observer View
+    // CameraX for AR Observer View and native media capture
     implementation("androidx.camera:camera-core:1.4.1")
     implementation("androidx.camera:camera-camera2:1.4.1")
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-view:1.4.1")
+    implementation("androidx.camera:camera-video:1.4.1")
+    implementation("androidx.camera:camera-effects:1.4.1")
 
     // Networking & Coroutines
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

@@ -20,6 +20,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import de.shakie.iss.databinding.ActivityMainBinding
 import de.shakie.iss.graphics.*
+import de.shakie.iss.observer.ObserverCameraControls
+import de.shakie.iss.ui.TelemetryPanel
 import de.shakie.iss.observer.ArCameraManager
 import de.shakie.iss.observer.CalibrationAccuracy
 import de.shakie.iss.observer.CameraProjectionData
@@ -46,6 +48,8 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     private lateinit var orientationHelper: OrientationSensorHelper
     private var arCameraManager: ArCameraManager? = null
     private var currentSatelliteInfo: SatelliteInfo? = null
+    private lateinit var telemetryPanel: TelemetryPanel
+    private lateinit var cameraControls: ObserverCameraControls
 
     private var currentOrientation = DeviceOrientation(0f, 0f, 0f, FloatArray(16))
     private var bordersVisible = true
@@ -228,6 +232,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 CameraProjectionData(calibrationAccuracy = CalibrationAccuracy.VIRTUAL_SKY)
             )
         }
+        if (::cameraControls.isInitialized) cameraControls.update()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -260,6 +265,10 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         orientationHelper = OrientationSensorHelper(this)
 
         setupUI()
+        telemetryPanel = TelemetryPanel(binding.telemetryCard)
+        cameraControls = ObserverCameraControls(this, binding.observerViewContainer,
+            binding.cameraPreview, binding.calloutOverlayView,
+            binding.btnToggleSkyMode, binding.btnToggleObserverTrajectory)
         setupSensors()
         setupCloudSync()
         setupSatelliteSync()
@@ -407,6 +416,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             binding.btnToggleSkyMode.text = "✦ AR-Kamera"
             permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
         }
+        cameraControls.update()
     }
 
     private fun setupSensors() {
@@ -523,7 +533,10 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     private fun setupLocationUpdates() {
         try {
             val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-            val lastLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (!fine && !coarse) return
+            val lastLoc = (if (fine) lm.getLastKnownLocation(LocationManager.GPS_PROVIDER) else null)
                 ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
             lastLoc?.let { updateObserverLocation(it) }
@@ -538,8 +551,11 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 }
             }
 
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            if (fine && lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationListener?.let { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 10000L, 50f, it) }
+            }
+            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationListener?.let { lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 10000L, 50f, it) }
             }
         } catch (ignored: Exception) {}
     }
@@ -552,10 +568,9 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
     }
 
     private fun updateObserverLocation(loc: Location) {
-        issTracker.observerLat = loc.latitude
-        issTracker.observerLon = loc.longitude
-        issTracker.observerAltKm = loc.altitude / 1000.0
-        orientationHelper.updateObserverLocation(loc.latitude, loc.longitude, loc.altitude / 1000.0)
+        val altitudeKm = if (loc.hasAltitude()) loc.altitude / 1000.0 else 0.05
+        issTracker.setObserverPosition(loc.latitude, loc.longitude, altitudeKm)
+        orientationHelper.updateObserverLocation(loc.latitude, loc.longitude, altitudeKm)
     }
 
     private fun startCameraPreview() {
@@ -588,7 +603,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
                 }
             }
         }
-        arCameraManager?.startCamera()
+        arCameraManager?.let { cameraControls.bind(it); it.startCamera() }
     }
 
     override fun onResume() {
@@ -746,13 +761,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
             )
         }
 
-        // Next Pass (Requirement 6)
-        val pass = snapshot.nextPass
-        if (pass != null) {
-            binding.tvNextPass.text = "NÄCHSTER ÜBERFLUG: " + pass.formatDescription()
-        } else {
-            binding.tvNextPass.text = "NÄCHSTER ÜBERFLUG: Berechne nächste Pass-Kulmination..."
-        }
+        telemetryPanel.update(snapshot)
     }
 
     override fun onDestroy() {
@@ -764,7 +773,7 @@ class MainActivity : AppCompatActivity(), Choreographer.FrameCallback {
         issTracker.destroy()
         cloudDownloader.destroy()
         gibsDownloader.destroy()
-        arCameraManager?.stopCamera()
+        arCameraManager?.destroy()
         binding.filamentView.destroy()
     }
 }
